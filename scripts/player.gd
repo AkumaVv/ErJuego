@@ -18,6 +18,10 @@ var stamina := max_stamina
 var attack_in_progress := false
 var sword_rest_position := Vector3.ZERO
 var sword_rest_rotation := Vector3.ZERO
+var network_ready := false
+var remote_position := Vector3.ZERO
+var remote_body_rotation := 0.0
+var remote_head_rotation := 0.0
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -27,7 +31,25 @@ func _ready() -> void:
 	sword_rest_position = sword.position
 	sword_rest_rotation = sword.rotation_degrees
 
+func configure_network_player(peer_id: int, character_index: int, character_color: Color, display_name: String) -> void:
+	set_multiplayer_authority(peer_id)
+	network_ready = true
+	remote_position = global_position
+	var local_player := is_multiplayer_authority()
+	$Head/Camera3D.current = local_player
+	$Head/Camera3D/Sword.visible = local_player
+	$BodyVisual.visible = not local_player
+	$BodyVisual/Name.text = display_name
+	var material := $BodyVisual/Torso.material_override.duplicate() as StandardMaterial3D
+	material.albedo_color = character_color
+	$BodyVisual/Torso.material_override = material
+	$BodyVisual/HeadMesh.material_override = material
+	if local_player:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
 func _input(event: InputEvent) -> void:
+	if not network_ready or not is_multiplayer_authority():
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		head.rotate_x(-event.relative.y * mouse_sensitivity)
@@ -44,6 +66,10 @@ func _attack() -> void:
 	if attack_in_progress:
 		return
 	attack_in_progress = true
+	_remote_attack.rpc()
+	_play_attack_animation()
+
+func _play_attack_animation() -> void:
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_QUAD)
 	tween.set_ease(Tween.EASE_OUT)
@@ -54,6 +80,12 @@ func _attack() -> void:
 	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation, 0.20)
 	tween.parallel().tween_property(sword, "position", sword_rest_position, 0.20)
 	tween.tween_callback(_finish_attack)
+
+@rpc("authority", "call_remote", "unreliable")
+func _remote_attack() -> void:
+	if not attack_in_progress:
+		attack_in_progress = true
+		_play_attack_animation()
 
 func _apply_sword_hit() -> void:
 	attack_ray.force_raycast_update()
@@ -67,6 +99,13 @@ func _finish_attack() -> void:
 	attack_in_progress = false
 
 func _physics_process(delta: float) -> void:
+	if not network_ready:
+		return
+	if not is_multiplayer_authority():
+		global_position = global_position.lerp(remote_position, minf(1.0, delta * 14.0))
+		rotation.y = lerp_angle(rotation.y, remote_body_rotation, minf(1.0, delta * 14.0))
+		head.rotation.x = lerp_angle(head.rotation.x, remote_head_rotation, minf(1.0, delta * 14.0))
+		return
 	if not is_on_floor():
 		velocity += get_gravity() * delta
 	if Input.is_action_just_pressed("jump") and is_on_floor():
@@ -86,3 +125,10 @@ func _physics_process(delta: float) -> void:
 	velocity.x = move_toward(velocity.x, target.x, acceleration * delta)
 	velocity.z = move_toward(velocity.z, target.z, acceleration * delta)
 	move_and_slide()
+	_sync_state.rpc(global_position, rotation.y, head.rotation.x)
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func _sync_state(position_: Vector3, body_rotation: float, head_rotation: float) -> void:
+	remote_position = position_
+	remote_body_rotation = body_rotation
+	remote_head_rotation = head_rotation
