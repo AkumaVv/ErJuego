@@ -1,11 +1,8 @@
 extends SceneTree
 
-const BASE := "res://addons/kaykit_dungeon_remastered/Assets/gltf/"
+const BASE := "res://addons/kaykit_character_pack_adventures/Characters/gltf/"
 const FILES := [
-	"wall.gltf.glb", "wall_corner.gltf.glb", "wall_doorway.glb",
-	"floor_tile_large.gltf.glb", "floor_tile_small.gltf.glb",
-	"pillar.gltf.glb", "torch_mounted.gltf.glb", "chest.glb",
-	"barrel_large.gltf.glb", "box_stacked.gltf.glb", "rubble_large.gltf.glb"
+	"Knight.glb", "Rogue_Hooded.glb", "Mage.glb", "Barbarian.glb"
 ]
 
 func _initialize() -> void:
@@ -16,8 +13,11 @@ func _initialize() -> void:
 			continue
 		var instance := packed.instantiate() as Node3D
 		root.add_child(instance)
+		await process_frame
 		var bounds := _bounds(instance)
 		print(file_name, " | position=", bounds.position, " size=", bounds.size)
+		for animation_player in instance.find_children("*", "AnimationPlayer", true, false):
+			print("  animations=", (animation_player as AnimationPlayer).get_animation_list())
 		instance.queue_free()
 	quit()
 

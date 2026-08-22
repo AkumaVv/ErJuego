@@ -1,4 +1,4 @@
-[gd_scene load_steps=28 format=3]
+[gd_scene load_steps=33 format=3]
 
 [ext_resource path="res://scripts/player.gd" type="Script" id="1_player"]
 [ext_resource path="res://scripts/dungeon.gd" type="Script" id="2_dungeon"]
@@ -119,17 +119,32 @@ size = Vector3(1.7, 2.6, 0.7)
 albedo_color = Color(0.72, 0.22, 0.22, 1)
 roughness = 0.78
 
-[sub_resource type="CapsuleMesh" id="Player_body_mesh"]
-radius = 0.42
-height = 1.35
-radial_segments = 10
-rings = 4
+[sub_resource type="BoxMesh" id="Player_body_mesh"]
+size = Vector3(0.72, 0.86, 0.38)
 
 [sub_resource type="SphereMesh" id="Player_head_mesh"]
-radius = 0.34
-height = 0.64
+radius = 0.29
+height = 0.56
 radial_segments = 10
 rings = 5
+
+[sub_resource type="StandardMaterial3D" id="Player_skin_material"]
+albedo_color = Color(0.72, 0.49, 0.32, 1)
+roughness = 0.88
+
+[sub_resource type="StandardMaterial3D" id="Player_boot_material"]
+albedo_color = Color(0.105, 0.07, 0.045, 1)
+roughness = 0.94
+
+[sub_resource type="BoxMesh" id="Player_arm_mesh"]
+size = Vector3(0.2, 0.78, 0.22)
+
+[sub_resource type="BoxMesh" id="Player_leg_mesh"]
+size = Vector3(0.25, 0.72, 0.28)
+
+[sub_resource type="BoxMesh" id="Player_boot_mesh"]
+material = SubResource("Player_boot_material")
+size = Vector3(0.27, 0.24, 0.42)
 
 [sub_resource type="StyleBoxFlat" id="Menu_panel_style"]
 bg_color = Color(0.025, 0.035, 0.05, 0.96)
@@ -162,17 +177,55 @@ shape = SubResource("CapsuleShape_player")
 [node name="BodyVisual" type="Node3D" parent="Player"]
 
 [node name="Torso" type="MeshInstance3D" parent="Player/BodyVisual"]
-position = Vector3(0, 0.72, 0)
+visible = false
+position = Vector3(0, 0.02, 0)
 material_override = SubResource("Player_body_material")
 mesh = SubResource("Player_body_mesh")
 
 [node name="HeadMesh" type="MeshInstance3D" parent="Player/BodyVisual"]
-position = Vector3(0, 1.63, 0)
-material_override = SubResource("Player_body_material")
+visible = false
+position = Vector3(0, 0.74, 0)
+material_override = SubResource("Player_skin_material")
 mesh = SubResource("Player_head_mesh")
 
+[node name="ArmLeft" type="MeshInstance3D" parent="Player/BodyVisual"]
+visible = false
+position = Vector3(-0.48, 0.0, 0)
+rotation_degrees = Vector3(0, 0, -6)
+material_override = SubResource("Player_body_material")
+mesh = SubResource("Player_arm_mesh")
+
+[node name="ArmRight" type="MeshInstance3D" parent="Player/BodyVisual"]
+visible = false
+position = Vector3(0.48, 0.0, 0)
+rotation_degrees = Vector3(0, 0, 6)
+material_override = SubResource("Player_body_material")
+mesh = SubResource("Player_arm_mesh")
+
+[node name="LegLeft" type="MeshInstance3D" parent="Player/BodyVisual"]
+visible = false
+position = Vector3(-0.2, -0.56, 0)
+material_override = SubResource("Player_body_material")
+mesh = SubResource("Player_leg_mesh")
+
+[node name="LegRight" type="MeshInstance3D" parent="Player/BodyVisual"]
+visible = false
+position = Vector3(0.2, -0.56, 0)
+material_override = SubResource("Player_body_material")
+mesh = SubResource("Player_leg_mesh")
+
+[node name="BootLeft" type="MeshInstance3D" parent="Player/BodyVisual"]
+visible = false
+position = Vector3(-0.2, -0.88, -0.07)
+mesh = SubResource("Player_boot_mesh")
+
+[node name="BootRight" type="MeshInstance3D" parent="Player/BodyVisual"]
+visible = false
+position = Vector3(0.2, -0.88, -0.07)
+mesh = SubResource("Player_boot_mesh")
+
 [node name="Name" type="Label3D" parent="Player/BodyVisual"]
-position = Vector3(0, 2.25, 0)
+position = Vector3(0, 1.35, 0)
 billboard = 1
 text = "Jugador"
 font_size = 28
@@ -192,6 +245,15 @@ light_energy = 1.35
 shadow_enabled = true
 omni_range = 7.0
 omni_attenuation = 1.4
+
+[node name="ThirdPersonArm" type="SpringArm3D" parent="Player/Head"]
+spring_length = 3.6
+margin = 0.18
+collision_mask = 1
+
+[node name="ThirdPersonCamera" type="Camera3D" parent="Player/Head/ThirdPersonArm"]
+fov = 74.0
+near = 0.08
 
 [node name="Sword" type="Node3D" parent="Player/Head/Camera3D"]
 position = Vector3(0.48, -0.48, -0.92)
@@ -347,11 +409,9 @@ placeholder_text = "Escribe tu nombre"
 max_length = 18
 
 [node name="AddressLabel" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "IP del anfitrión"
+text = "Servidor"
 
-[node name="Address" type="LineEdit" parent="MultiplayerMenu/MenuPanel/VBox"]
-placeholder_text = "127.0.0.1 para probar en el mismo PC"
-text = "127.0.0.1"
+[node name="Address" type="OptionButton" parent="MultiplayerMenu/MenuPanel/VBox"]
 
 [node name="PortLabel" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
 text = "Puerto"
@@ -359,7 +419,7 @@ text = "Puerto"
 [node name="Port" type="SpinBox" parent="MultiplayerMenu/MenuPanel/VBox"]
 min_value = 1024.0
 max_value = 65535.0
-value = 7777.0
+value = 9417.0
 allow_greater = false
 allow_lesser = false
 

@@ -1,18 +1,20 @@
 extends Node3D
 
-const DEFAULT_PORT := 7777
+const DEFAULT_PORT := 9417
+const SERVER_ADDRESSES := ["127.0.0.1", "188.77.174.150"]
+const SETTINGS_PATH := "user://multiplayer_settings.cfg"
 const MAX_PLAYERS := 4
 const SPAWN_POINTS := [
 	Vector3(-2.4, 1.05, 9.0), Vector3(-0.8, 1.05, 9.0),
 	Vector3(0.8, 1.05, 9.0), Vector3(2.4, 1.05, 9.0)
 ]
-const CHARACTER_NAMES := ["Caballero rojo", "Guardián azul", "Explorador verde", "Mercenario dorado"]
+const CHARACTER_NAMES := ["Caballero", "Pícaro encapuchado", "Mago", "Bárbaro"]
 const CHARACTER_COLORS := [Color("#b94747"), Color("#3e70bd"), Color("#3f985c"), Color("#c19235")]
 
 @onready var player_template: CharacterBody3D = $Player
 @onready var menu: Control = $MultiplayerMenu/MenuPanel
 @onready var interface: CanvasLayer = $Interface
-@onready var address_input: LineEdit = $MultiplayerMenu/MenuPanel/VBox/Address
+@onready var address_select: OptionButton = $MultiplayerMenu/MenuPanel/VBox/Address
 @onready var character_select: OptionButton = $MultiplayerMenu/MenuPanel/VBox/Character
 @onready var name_input: LineEdit = $MultiplayerMenu/MenuPanel/VBox/PlayerName
 @onready var port_input: SpinBox = $MultiplayerMenu/MenuPanel/VBox/Port
@@ -25,6 +27,10 @@ var selected_character := 0
 func _ready() -> void:
 	for character_name in CHARACTER_NAMES:
 		character_select.add_item(character_name)
+	address_select.add_item("Local / este PC — 127.0.0.1")
+	address_select.add_item("Servidor — 188.77.174.150")
+	port_input.value = DEFAULT_PORT
+	_load_settings()
 	player_template.process_mode = Node.PROCESS_MODE_DISABLED
 	player_template.visible = false
 	player_template.position = Vector3(0.0, -100.0, 0.0)
@@ -38,6 +44,7 @@ func _ready() -> void:
 
 func _on_host_pressed() -> void:
 	selected_character = character_select.selected
+	_save_settings()
 	var port := int(port_input.value)
 	var peer := ENetMultiplayerPeer.new()
 	var error := peer.create_server(port, MAX_PLAYERS)
@@ -53,9 +60,8 @@ func _on_host_pressed() -> void:
 
 func _on_join_pressed() -> void:
 	selected_character = character_select.selected
-	var address := address_input.text.strip_edges()
-	if address.is_empty():
-		address = "127.0.0.1"
+	_save_settings()
+	var address: String = SERVER_ADDRESSES[address_select.selected]
 	var port := int(port_input.value)
 	var peer := ENetMultiplayerPeer.new()
 	var error := peer.create_client(address, port)
@@ -117,6 +123,25 @@ func _clean_name(requested_name: String, peer_id: int) -> String:
 	var cleaned := requested_name.strip_edges().replace("\n", " ").replace("\r", " ")
 	cleaned = cleaned.left(18)
 	return cleaned if not cleaned.is_empty() else "Jugador %d" % peer_id
+
+func _save_settings() -> void:
+	var config := ConfigFile.new()
+	config.set_value("player", "name", name_input.text.strip_edges())
+	config.set_value("player", "character", character_select.selected)
+	config.set_value("connection", "server", address_select.selected)
+	config.set_value("connection", "port", int(port_input.value))
+	var error := config.save(SETTINGS_PATH)
+	if error != OK:
+		push_warning("No se pudo guardar la configuración: " + error_string(error))
+
+func _load_settings() -> void:
+	var config := ConfigFile.new()
+	if config.load(SETTINGS_PATH) != OK:
+		return
+	name_input.text = str(config.get_value("player", "name", ""))
+	character_select.select(clampi(int(config.get_value("player", "character", 0)), 0, CHARACTER_NAMES.size() - 1))
+	address_select.select(clampi(int(config.get_value("connection", "server", 0)), 0, SERVER_ADDRESSES.size() - 1))
+	port_input.value = clampi(int(config.get_value("connection", "port", DEFAULT_PORT)), 1024, 65535)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	players.erase(peer_id)
