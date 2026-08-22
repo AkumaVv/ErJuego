@@ -2,7 +2,7 @@ extends SceneTree
 
 const BASE := "res://addons/kaykit_character_pack_adventures/Characters/gltf/"
 const FILES := [
-	"Knight.glb"
+	"Knight.glb", "Rogue_Hooded.glb", "Mage.glb", "Barbarian.glb"
 ]
 
 func _initialize() -> void:
@@ -28,6 +28,10 @@ func _initialize() -> void:
 			for bone in range(skeleton.get_bone_count()):
 				bones.append(skeleton.get_bone_name(bone))
 			print("  bones=", bones)
+		var meshes: Array[String] = []
+		for mesh_node in instance.find_children("*", "MeshInstance3D", true, false):
+			meshes.append((mesh_node as MeshInstance3D).name)
+		print("  meshes=", meshes)
 		instance.queue_free()
 	quit()
 
