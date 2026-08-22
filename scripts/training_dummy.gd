@@ -7,6 +7,7 @@ var last_hit_by_peer: Dictionary = {}
 @onready var counter: Label3D = $Counter
 
 func _ready() -> void:
+	add_to_group("damageable")
 	counter.text = "MUÑECO DE PRÁCTICA\nGolpes: 0 · Inmortal"
 
 func receive_hit(_damage: int) -> void:

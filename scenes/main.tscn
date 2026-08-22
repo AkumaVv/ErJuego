@@ -274,6 +274,10 @@ mesh = SubResource("Sword_grip_mesh")
 position = Vector3(0, -0.47, 0)
 mesh = SubResource("Sword_pommel_mesh")
 
+[node name="Offhand" type="Node3D" parent="Player/Head/Camera3D"]
+position = Vector3(-0.48, -0.44, -0.88)
+rotation_degrees = Vector3(-8, 0, 9)
+
 [node name="AttackRay" type="RayCast3D" parent="Player/Head/Camera3D"]
 target_position = Vector3(0, 0, -2)
 enabled = true
@@ -318,7 +322,7 @@ offset_left = 24.0
 offset_top = 20.0
 offset_right = 560.0
 offset_bottom = 52.0
-text = "WASD · mover    SHIFT · correr    ESPACIO · saltar    ESC · liberar ratón"
+text = "WASD · mover   SHIFT · correr   CLICS · habilidades   F1/F3 · cámara"
 label_settings = SubResource("LabelSettings_help")
 
 [node name="StaminaLabel" type="Label" parent="Interface"]

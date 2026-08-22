@@ -3,6 +3,7 @@ extends CharacterBody3D
 const CHARACTER_BASE := "res://addons/kaykit_character_pack_adventures/Characters/gltf/"
 const CHARACTER_FILES := ["Knight.glb", "Rogue_Hooded.glb", "Mage.glb", "Barbarian.glb"]
 const CHARACTER_SCALES := [0.73, 0.80, 0.60, 0.75]
+const WEAPON_BASE := "res://addons/kaykit_character_pack_adventures/Assets/gltf/"
 
 @export var move_speed := 5.5
 @export var sprint_speed := 9.0
@@ -17,6 +18,7 @@ const CHARACTER_SCALES := [0.73, 0.80, 0.60, 0.75]
 @onready var head: Node3D = $Head
 @onready var stamina_bar: ProgressBar = get_node_or_null("../Interface/StaminaBar")
 @onready var sword: Node3D = $Head/Camera3D/Sword
+@onready var offhand: Node3D = $Head/Camera3D/Offhand
 @onready var attack_ray: RayCast3D = $Head/Camera3D/AttackRay
 @onready var first_person_camera: Camera3D = $Head/Camera3D
 @onready var third_person_camera: Camera3D = $Head/ThirdPersonArm/ThirdPersonCamera
@@ -25,6 +27,8 @@ var stamina := max_stamina
 var attack_in_progress := false
 var sword_rest_position := Vector3.ZERO
 var sword_rest_rotation := Vector3.ZERO
+var offhand_rest_position := Vector3.ZERO
+var offhand_rest_rotation := Vector3.ZERO
 var network_ready := false
 var remote_position := Vector3.ZERO
 var remote_body_rotation := 0.0
@@ -33,6 +37,9 @@ var character_model: Node3D
 var character_animation: AnimationPlayer
 var current_character_animation := ""
 var third_person_enabled := false
+var character_class := 0
+var blocking := false
+var barbarian_left_next := true
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -41,6 +48,8 @@ func _ready() -> void:
 		stamina_bar.value = stamina
 	sword_rest_position = sword.position
 	sword_rest_rotation = sword.rotation_degrees
+	offhand_rest_position = offhand.position
+	offhand_rest_rotation = offhand.rotation_degrees
 
 func configure_network_player(peer_id: int, character_index: int, _character_color: Color, display_name: String) -> void:
 	set_multiplayer_authority(peer_id)
@@ -50,11 +59,73 @@ func configure_network_player(peer_id: int, character_index: int, _character_col
 	$Head/Camera3D.current = local_player
 	$Head/ThirdPersonArm/ThirdPersonCamera.current = false
 	$Head/Camera3D/Sword.visible = local_player
+	$Head/Camera3D/Offhand.visible = local_player
 	$BodyVisual.visible = not local_player
 	$BodyVisual/Name.text = display_name
+	character_class = character_index
 	_load_character_model(character_index)
+	_setup_third_person_weapons(character_index)
 	if local_player:
+		_setup_first_person_weapons(character_index)
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _weapon_asset(file_name: String, parent: Node3D, position_ := Vector3.ZERO, rotation_ := Vector3.ZERO, scale_ := 1.0) -> Node3D:
+	var packed := load(WEAPON_BASE + file_name) as PackedScene
+	if not packed:
+		push_error("No se pudo cargar el arma: " + file_name)
+		return null
+	var weapon := packed.instantiate() as Node3D
+	weapon.position = position_
+	weapon.rotation_degrees = rotation_
+	weapon.scale = Vector3.ONE * scale_
+	parent.add_child(weapon)
+	return weapon
+
+func _setup_first_person_weapons(class_index: int) -> void:
+	for child in sword.get_children():
+		child.visible = false
+	sword.position = sword_rest_position
+	sword.rotation_degrees = sword_rest_rotation
+	offhand.position = offhand_rest_position
+	offhand.rotation_degrees = offhand_rest_rotation
+	match class_index:
+		0:
+			_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.28, 0.0), Vector3.ZERO, 0.72)
+			_weapon_asset("shield_badge.gltf", offhand, Vector3.ZERO, Vector3(0.0, 180.0, 0.0), 0.72)
+		1:
+			sword.position = Vector3(0.0, -0.34, -0.92)
+			sword.rotation_degrees = Vector3(0.0, 180.0, 0.0)
+			_weapon_asset("crossbow_2handed.gltf", sword, Vector3.ZERO, Vector3.ZERO, 0.62)
+		2:
+			_weapon_asset("wand.gltf", sword, Vector3(0.0, 0.2, 0.0), Vector3.ZERO, 0.9)
+		3:
+			_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.28, 0.0), Vector3.ZERO, 0.7)
+			_weapon_asset("sword_1handed.gltf", offhand, Vector3(0.0, 0.28, 0.0), Vector3.ZERO, 0.7)
+
+func _setup_third_person_weapons(class_index: int) -> void:
+	if not character_model:
+		return
+	var skeletons := character_model.find_children("*", "Skeleton3D", true, false)
+	if skeletons.is_empty():
+		return
+	var skeleton := skeletons[0] as Skeleton3D
+	match class_index:
+		0:
+			_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
+			_attach_to_hand(skeleton, "handslot.l", "shield_badge.gltf")
+		1:
+			_attach_to_hand(skeleton, "handslot.r", "crossbow_2handed.gltf")
+		2:
+			_attach_to_hand(skeleton, "handslot.r", "wand.gltf")
+		3:
+			_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
+			_attach_to_hand(skeleton, "handslot.l", "sword_1handed.gltf")
+
+func _attach_to_hand(skeleton: Skeleton3D, bone_name: String, file_name: String) -> void:
+	var attachment := BoneAttachment3D.new()
+	attachment.bone_name = bone_name
+	skeleton.add_child(attachment)
+	_weapon_asset(file_name, attachment)
 
 func _load_character_model(character_index: int) -> void:
 	character_index = clampi(character_index, 0, CHARACTER_FILES.size() - 1)
@@ -98,47 +169,213 @@ func _input(event: InputEvent) -> void:
 		head.rotation.x = clamp(head.rotation.x, deg_to_rad(-85.0), deg_to_rad(85.0))
 	if event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	if event is InputEventMouseButton and event.pressed:
-		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseButton:
+		if event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		elif event.button_index == MOUSE_BUTTON_LEFT:
+			return
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_attack()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			if character_class == 0:
+				_set_blocking(event.pressed)
+			elif character_class == 3 and event.pressed:
+				_whirlwind()
 
 func _set_camera_mode(use_third_person: bool) -> void:
 	third_person_enabled = use_third_person
 	first_person_camera.current = not use_third_person
 	third_person_camera.current = use_third_person
 	sword.visible = not use_third_person
+	offhand.visible = not use_third_person
 	$BodyVisual.visible = use_third_person
 
 func _attack() -> void:
-	if attack_in_progress:
+	if attack_in_progress or blocking:
 		return
-	attack_in_progress = true
-	_remote_attack.rpc()
-	if third_person_enabled:
-		_play_character_animation("1H_Melee_Attack_Stab")
-	_play_attack_animation(true)
+	match character_class:
+		0:
+			_start_melee("1H_Melee_Attack_Stab", sword, sword_rest_position, sword_rest_rotation, Vector3(-28.0, -4.0, -24.0))
+		1:
+			_shoot_crossbow()
+		2:
+			_cast_magic_ray()
+		3:
+			_barbarian_slash()
 
-func _play_attack_animation(apply_hit: bool) -> void:
+func _start_melee(animation_name: String, pivot: Node3D, rest_position: Vector3, rest_rotation: Vector3, attack_rotation: Vector3) -> void:
+	attack_in_progress = true
+	_remote_character_action.rpc(animation_name, 0.32)
+	if third_person_enabled:
+		_play_character_animation(animation_name)
+	_play_attack_animation(pivot, rest_position, rest_rotation, attack_rotation, true)
+
+func _play_attack_animation(pivot: Node3D, rest_position: Vector3, rest_rotation: Vector3, attack_rotation: Vector3, apply_hit: bool) -> void:
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_QUAD)
 	tween.set_ease(Tween.EASE_OUT)
-	tween.tween_property(sword, "rotation_degrees", Vector3(-28.0, -4.0, -24.0), 0.10)
-	tween.parallel().tween_property(sword, "position", sword_rest_position + Vector3(0.0, 0.03, -0.62), 0.10)
+	tween.tween_property(pivot, "rotation_degrees", attack_rotation, 0.10)
+	tween.parallel().tween_property(pivot, "position", rest_position + Vector3(0.0, 0.03, -0.62), 0.10)
 	if apply_hit:
 		tween.tween_callback(_apply_sword_hit)
 	tween.set_ease(Tween.EASE_IN_OUT)
-	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation, 0.20)
-	tween.parallel().tween_property(sword, "position", sword_rest_position, 0.20)
+	tween.tween_property(pivot, "rotation_degrees", rest_rotation, 0.20)
+	tween.parallel().tween_property(pivot, "position", rest_position, 0.20)
 	tween.tween_callback(_finish_attack)
 
 @rpc("authority", "call_remote", "unreliable")
-func _remote_attack() -> void:
+func _remote_character_action(animation_name: String, duration: float) -> void:
 	if not attack_in_progress:
 		attack_in_progress = true
-		_play_character_animation("1H_Melee_Attack_Stab")
-		_play_attack_animation(false)
+		_play_character_animation(animation_name)
+		_finish_remote_action(duration)
+
+func _finish_remote_action(duration: float) -> void:
+	await get_tree().create_timer(duration).timeout
+	_finish_attack()
+
+func _barbarian_slash() -> void:
+	var use_left := barbarian_left_next
+	barbarian_left_next = not barbarian_left_next
+	var pivot := offhand if use_left else sword
+	var rest_position := offhand_rest_position if use_left else sword_rest_position
+	var rest_rotation := offhand_rest_rotation if use_left else sword_rest_rotation
+	var attack_rotation := Vector3(-24.0, 8.0, 58.0) if use_left else Vector3(-24.0, -8.0, -58.0)
+	_start_melee("Dualwield_Melee_Attack_Slice", pivot, rest_position, rest_rotation, attack_rotation)
+
+func _set_blocking(active: bool) -> void:
+	if blocking == active or attack_in_progress:
+		return
+	blocking = active
+	_remote_block.rpc(active)
+	current_character_animation = ""
+	_play_character_animation("Blocking" if active else "Idle")
+	var tween := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	var target_position := offhand_rest_position + Vector3(0.22, 0.28, -0.30) if active else offhand_rest_position
+	var target_rotation := Vector3(-6.0, 18.0, -12.0) if active else offhand_rest_rotation
+	tween.tween_property(offhand, "position", target_position, 0.14)
+	tween.parallel().tween_property(offhand, "rotation_degrees", target_rotation, 0.14)
+
+@rpc("authority", "call_remote", "reliable")
+func _remote_block(active: bool) -> void:
+	blocking = active
+	current_character_animation = ""
+	_play_character_animation("Blocking" if active else "Idle")
+
+func _shoot_crossbow() -> void:
+	if attack_in_progress:
+		return
+	attack_in_progress = true
+	var shot := _ranged_query(22.0)
+	var origin: Vector3 = shot.origin
+	var end: Vector3 = shot.end
+	_remote_ranged_effect.rpc(0, origin, end)
+	_spawn_ranged_effect(0, origin, end)
+	_remote_character_action.rpc("2H_Ranged_Shoot", 0.55)
+	if third_person_enabled:
+		_play_character_animation("2H_Ranged_Shoot")
+	_deliver_projectile_hit(shot.collider, origin.distance_to(end) / 18.0)
+	_finish_local_action(0.55)
+
+func _cast_magic_ray() -> void:
+	if attack_in_progress:
+		return
+	attack_in_progress = true
+	var shot := _ranged_query(18.0)
+	var origin: Vector3 = shot.origin
+	var end: Vector3 = shot.end
+	_remote_ranged_effect.rpc(1, origin, end)
+	_spawn_ranged_effect(1, origin, end)
+	_remote_character_action.rpc("Spellcast_Shoot", 0.48)
+	if third_person_enabled:
+		_play_character_animation("Spellcast_Shoot")
+	var target: Object = shot.collider
+	if target and target.has_method("receive_hit"):
+		target.receive_hit(1)
+	_finish_local_action(0.48)
+
+func _ranged_query(max_range: float) -> Dictionary:
+	var origin := first_person_camera.global_position
+	var end := origin - first_person_camera.global_transform.basis.z * max_range
+	var query := PhysicsRayQueryParameters3D.create(origin, end)
+	query.exclude = [get_rid()]
+	var result := get_world_3d().direct_space_state.intersect_ray(query)
+	return {
+		"origin": origin,
+		"end": result.get("position", end),
+		"collider": result.get("collider", null)
+	}
+
+func _deliver_projectile_hit(target: Object, travel_time: float) -> void:
+	await get_tree().create_timer(travel_time).timeout
+	if is_instance_valid(target) and target.has_method("receive_hit"):
+		target.receive_hit(1)
+
+func _finish_local_action(duration: float) -> void:
+	await get_tree().create_timer(duration).timeout
+	_finish_attack()
+
+@rpc("authority", "call_remote", "unreliable")
+func _remote_ranged_effect(effect_type: int, origin: Vector3, end: Vector3) -> void:
+	_spawn_ranged_effect(effect_type, origin, end)
+
+func _spawn_ranged_effect(effect_type: int, origin: Vector3, end: Vector3) -> void:
+	if effect_type == 0:
+		var packed := load(WEAPON_BASE + "arrow.gltf") as PackedScene
+		if not packed:
+			return
+		var projectile := packed.instantiate() as Node3D
+		get_parent().add_child(projectile)
+		projectile.global_position = origin
+		projectile.scale = Vector3.ONE * 0.42
+		projectile.look_at(end, Vector3.UP)
+		projectile.rotate_object_local(Vector3.RIGHT, deg_to_rad(-90.0))
+		var duration := origin.distance_to(end) / 18.0
+		var tween := projectile.create_tween()
+		tween.tween_property(projectile, "global_position", end, duration)
+		tween.tween_callback(projectile.queue_free)
+	else:
+		var beam := MeshInstance3D.new()
+		var mesh := CylinderMesh.new()
+		var distance := origin.distance_to(end)
+		mesh.top_radius = 0.035
+		mesh.bottom_radius = 0.035
+		mesh.height = distance
+		mesh.radial_segments = 8
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.albedo_color = Color(0.25, 0.65, 1.0, 0.9)
+		material.emission_enabled = true
+		material.emission = Color(0.18, 0.55, 1.0)
+		material.emission_energy_multiplier = 5.0
+		mesh.material = material
+		beam.mesh = mesh
+		get_parent().add_child(beam)
+		beam.global_position = (origin + end) * 0.5
+		beam.quaternion = Quaternion(Vector3.UP, (end - origin).normalized())
+		var tween := beam.create_tween()
+		tween.tween_property(beam, "scale", Vector3(0.05, 1.0, 0.05), 0.16)
+		tween.tween_callback(beam.queue_free)
+
+func _whirlwind() -> void:
+	if attack_in_progress or blocking:
+		return
+	attack_in_progress = true
+	_remote_character_action.rpc("2H_Melee_Attack_Spinning", 0.75)
+	if third_person_enabled:
+		_play_character_animation("2H_Melee_Attack_Spinning")
+	var tween := create_tween().set_trans(Tween.TRANS_QUAD)
+	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation + Vector3(0.0, 0.0, -180.0), 0.20)
+	tween.parallel().tween_property(offhand, "rotation_degrees", offhand_rest_rotation + Vector3(0.0, 0.0, 180.0), 0.20)
+	tween.tween_callback(_apply_whirlwind_hit)
+	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation, 0.35)
+	tween.parallel().tween_property(offhand, "rotation_degrees", offhand_rest_rotation, 0.35)
+	tween.tween_callback(_finish_attack)
+
+func _apply_whirlwind_hit() -> void:
+	for target in get_tree().get_nodes_in_group("damageable"):
+		if target is Node3D and global_position.distance_to((target as Node3D).global_position) <= 2.6:
+			if target.has_method("receive_hit"):
+				target.receive_hit(2)
 
 func _apply_sword_hit() -> void:
 	attack_ray.force_raycast_update()
