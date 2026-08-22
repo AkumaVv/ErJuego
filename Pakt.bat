@@ -4,4 +4,5 @@ del game.zip
 if "%1"=="commit" (
     git add .
     git commit -m "stuff"
+    git push
 )
