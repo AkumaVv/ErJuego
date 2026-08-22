@@ -238,13 +238,13 @@ position = Vector3(0, 0.62, 0)
 current = true
 fov = 78.0
 
-[node name="PlayerLight" type="OmniLight3D" parent="Player/Head"]
+[node name="PlayerLight" type="OmniLight3D" parent="Player"]
 position = Vector3(0, 0.05, 0)
-light_color = Color(0.72, 0.82, 1, 1)
-light_energy = 1.35
-shadow_enabled = true
-omni_range = 7.0
-omni_attenuation = 1.4
+light_color = Color(0.67, 0.78, 1, 1)
+light_energy = 1.15
+shadow_enabled = false
+omni_range = 6.0
+omni_attenuation = 1.75
 
 [node name="ThirdPersonArm" type="SpringArm3D" parent="Player/Head"]
 spring_length = 3.6

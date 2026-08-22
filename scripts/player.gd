@@ -6,7 +6,8 @@ const CHARACTER_SCALES := [0.73, 0.80, 0.60, 0.75]
 
 @export var move_speed := 5.5
 @export var sprint_speed := 9.0
-@export var acceleration := 18.0
+@export var acceleration := 32.0
+@export var deceleration := 55.0
 @export var jump_velocity := 5.0
 @export var mouse_sensitivity := 0.0022
 @export var max_stamina := 100.0
@@ -117,15 +118,16 @@ func _attack() -> void:
 	_remote_attack.rpc()
 	if third_person_enabled:
 		_play_character_animation("1H_Melee_Attack_Stab")
-	_play_attack_animation()
+	_play_attack_animation(true)
 
-func _play_attack_animation() -> void:
+func _play_attack_animation(apply_hit: bool) -> void:
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_QUAD)
 	tween.set_ease(Tween.EASE_OUT)
 	tween.tween_property(sword, "rotation_degrees", Vector3(-28.0, -4.0, -24.0), 0.10)
 	tween.parallel().tween_property(sword, "position", sword_rest_position + Vector3(0.0, 0.03, -0.62), 0.10)
-	tween.tween_callback(_apply_sword_hit)
+	if apply_hit:
+		tween.tween_callback(_apply_sword_hit)
 	tween.set_ease(Tween.EASE_IN_OUT)
 	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation, 0.20)
 	tween.parallel().tween_property(sword, "position", sword_rest_position, 0.20)
@@ -136,7 +138,7 @@ func _remote_attack() -> void:
 	if not attack_in_progress:
 		attack_in_progress = true
 		_play_character_animation("1H_Melee_Attack_Stab")
-		_play_attack_animation()
+		_play_attack_animation(false)
 
 func _apply_sword_hit() -> void:
 	attack_ray.force_raycast_update()
@@ -177,9 +179,14 @@ func _physics_process(delta: float) -> void:
 		stamina = minf(max_stamina, stamina + stamina_regen_per_second * delta)
 	if stamina_bar:
 		stamina_bar.value = stamina
-	var target := direction * current_speed
-	velocity.x = move_toward(velocity.x, target.x, acceleration * delta)
-	velocity.z = move_toward(velocity.z, target.z, acceleration * delta)
+	var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
+	if direction.is_zero_approx():
+		horizontal_velocity = horizontal_velocity.move_toward(Vector3.ZERO, deceleration * delta)
+	else:
+		var next_speed := move_toward(horizontal_velocity.length(), current_speed, acceleration * delta)
+		horizontal_velocity = direction * next_speed
+	velocity.x = horizontal_velocity.x
+	velocity.z = horizontal_velocity.z
 	move_and_slide()
 	_sync_state.rpc(global_position, rotation.y, head.rotation.x)
 
