@@ -1,4 +1,4 @@
-[gd_scene load_steps=33 format=3]
+[gd_scene load_steps=34 format=3]
 
 [ext_resource path="res://scripts/player.gd" type="Script" id="1_player"]
 [ext_resource path="res://scripts/dungeon.gd" type="Script" id="2_dungeon"]
@@ -31,24 +31,16 @@ font_color = Color(0.92, 0.94, 1, 1)
 outline_size = 5
 outline_color = Color(0.02, 0.025, 0.04, 0.85)
 
-[sub_resource type="StyleBoxFlat" id="Stamina_background"]
-bg_color = Color(0.035, 0.045, 0.05, 0.9)
+[sub_resource type="StyleBoxFlat" id="Health_background"]
+bg_color = Color(0.12, 0.015, 0.02, 0.94)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.12, 0.16, 0.17, 1)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
+border_color = Color(0.04, 0.01, 0.012, 1)
 
-[sub_resource type="StyleBoxFlat" id="Stamina_fill"]
-bg_color = Color(0.25, 0.78, 0.46, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
+[sub_resource type="StyleBoxFlat" id="Health_fill"]
+bg_color = Color(0.78, 0.055, 0.07, 1)
 
 [sub_resource type="StandardMaterial3D" id="Sword_blade_material"]
 albedo_color = Color(0.58, 0.64, 0.7, 1)
@@ -113,7 +105,10 @@ radial_segments = 8
 rings = 4
 
 [sub_resource type="BoxShape3D" id="Dummy_collision_shape"]
-size = Vector3(1.7, 2.6, 0.7)
+size = Vector3(1.05, 1.75, 0.78)
+
+[sub_resource type="SphereShape3D" id="Skeleton_head_collision_shape"]
+radius = 0.58
 
 [sub_resource type="StandardMaterial3D" id="Player_body_material"]
 albedo_color = Color(0.72, 0.22, 0.22, 1)
@@ -157,6 +152,24 @@ corner_radius_top_left = 10
 corner_radius_top_right = 10
 corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="Gothic_panel_style"]
+bg_color = Color(0.045, 0.025, 0.018, 0.985)
+border_width_left = 6
+border_width_top = 6
+border_width_right = 6
+border_width_bottom = 6
+border_color = Color(0.43, 0.29, 0.105, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+shadow_color = Color(0, 0, 0, 0.85)
+shadow_size = 18
+
+[sub_resource type="StyleBoxLine" id="Gothic_separator_style"]
+color = Color(0.58, 0.39, 0.13, 0.9)
+thickness = 2
 
 [node name="Main" type="Node3D"]
 script = ExtResource("4_main")
@@ -227,7 +240,7 @@ mesh = SubResource("Player_boot_mesh")
 [node name="Name" type="Label3D" parent="Player/BodyVisual"]
 position = Vector3(0, 1.35, 0)
 billboard = 1
-text = "Jugador"
+text = "Player"
 font_size = 28
 outline_size = 6
 
@@ -287,32 +300,65 @@ position = Vector3(0, 0.05, 3)
 script = ExtResource("3_dummy")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="TrainingDummy"]
-position = Vector3(0, 1.3, 0)
+position = Vector3(0, 1.05, 0)
 shape = SubResource("Dummy_collision_shape")
 
-[node name="Post" type="MeshInstance3D" parent="TrainingDummy"]
-position = Vector3(0, 0.72, 0)
-mesh = SubResource("Dummy_post_mesh")
-
-[node name="Torso" type="MeshInstance3D" parent="TrainingDummy"]
-position = Vector3(0, 1.42, 0)
-mesh = SubResource("Dummy_torso_mesh")
-
-[node name="Arms" type="MeshInstance3D" parent="TrainingDummy"]
-position = Vector3(0, 1.52, 0)
-mesh = SubResource("Dummy_arm_mesh")
-
-[node name="Head" type="MeshInstance3D" parent="TrainingDummy"]
-position = Vector3(0, 2.25, 0)
-mesh = SubResource("Dummy_head_mesh")
+[node name="HeadCollisionShape3D" type="CollisionShape3D" parent="TrainingDummy"]
+position = Vector3(0, 2.02, 0)
+shape = SubResource("Skeleton_head_collision_shape")
 
 [node name="Counter" type="Label3D" parent="TrainingDummy"]
-position = Vector3(0, 3.05, 0)
+position = Vector3(0, 3.02, 0)
 billboard = 1
-text = "MUÑECO DE PRÁCTICA"
+text = "SKELETON WARRIOR"
 font_size = 38
 outline_size = 8
 modulate = Color(0.9, 0.94, 1, 1)
+
+[node name="TrainingEnemy2" type="StaticBody3D" parent="."]
+position = Vector3(2, 0.05, 4.2)
+script = ExtResource("3_dummy")
+target_title = "TRAINING ENEMY"
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TrainingEnemy2"]
+position = Vector3(0, 1.05, 0)
+shape = SubResource("Dummy_collision_shape")
+
+[node name="HeadCollisionShape3D" type="CollisionShape3D" parent="TrainingEnemy2"]
+position = Vector3(0, 2.02, 0)
+shape = SubResource("Skeleton_head_collision_shape")
+
+[node name="Counter" type="Label3D" parent="TrainingEnemy2"]
+position = Vector3(0, 3.02, 0)
+billboard = 1
+text = "TRAINING ENEMY"
+font_size = 38
+outline_size = 8
+modulate = Color(1, 0.72, 0.72, 1)
+
+[node name="TrainingAlly" type="StaticBody3D" parent="."]
+position = Vector3(-2, 0.05, 4.2)
+script = ExtResource("3_dummy")
+target_title = "ALLIED DUMMY"
+is_ally = true
+combat_mode = 1
+starting_health = 700
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TrainingAlly"]
+position = Vector3(0, 1.05, 0)
+shape = SubResource("Dummy_collision_shape")
+
+[node name="HeadCollisionShape3D" type="CollisionShape3D" parent="TrainingAlly"]
+position = Vector3(0, 2.02, 0)
+shape = SubResource("Skeleton_head_collision_shape")
+
+[node name="Counter" type="Label3D" parent="TrainingAlly"]
+position = Vector3(0, 3.02, 0)
+billboard = 1
+text = "ALLIED DUMMY"
+font_size = 38
+outline_size = 8
+modulate = Color(0.55, 1, 0.65, 1)
 
 [node name="Interface" type="CanvasLayer" parent="."]
 
@@ -322,22 +368,10 @@ offset_left = 24.0
 offset_top = 20.0
 offset_right = 560.0
 offset_bottom = 52.0
-text = "WASD · mover   SHIFT · correr   CLICS · habilidades   F1/F3 · cámara"
+text = "WASD · move   SHIFT · sprint   CLICKS · abilities   I/C · panels   F1/F3 · camera"
 label_settings = SubResource("LabelSettings_help")
 
-[node name="StaminaLabel" type="Label" parent="Interface"]
-mouse_filter = 2
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 24.0
-offset_top = -66.0
-offset_right = 170.0
-offset_bottom = -42.0
-text = "STAMINA"
-label_settings = SubResource("LabelSettings_help")
-
-[node name="StaminaBar" type="ProgressBar" parent="Interface"]
+[node name="HealthBar" type="ProgressBar" parent="Interface"]
 mouse_filter = 2
 anchors_preset = 2
 anchor_top = 1.0
@@ -348,8 +382,68 @@ offset_right = 284.0
 offset_bottom = -20.0
 value = 100.0
 show_percentage = false
-theme_override_styles/background = SubResource("Stamina_background")
-theme_override_styles/fill = SubResource("Stamina_fill")
+theme_override_styles/background = SubResource("Health_background")
+theme_override_styles/fill = SubResource("Health_fill")
+
+[node name="Value" type="Label" parent="Interface/HealthBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.08, 0.01, 0.015, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 15
+
+[node name="SecondaryCooldown" type="TextureProgressBar" parent="Interface"]
+custom_minimum_size = Vector2(96, 96)
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -128.0
+offset_top = -48.0
+offset_right = -32.0
+offset_bottom = 48.0
+value = 100.0
+fill_mode = 4
+
+[node name="Value" type="Label" parent="Interface/SecondaryCooldown"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+text = "RMB"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.03, 0.01, 0.015, 1)
+theme_override_constants/outline_size = 5
+theme_override_font_sizes/font_size = 18
+
+[node name="Name" type="Label" parent="Interface/SecondaryCooldown"]
+layout_mode = 0
+offset_left = -45.0
+offset_top = 101.0
+offset_right = 141.0
+offset_bottom = 130.0
+mouse_filter = 2
+text = "SECONDARY"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.92, 0.94, 1, 1)
+theme_override_colors/font_outline_color = Color(0.02, 0.025, 0.04, 0.9)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 15
 
 [node name="CrosshairV" type="Panel" parent="Interface"]
 mouse_filter = 2
@@ -396,29 +490,29 @@ theme_override_styles/panel = SubResource("Menu_panel_style")
 theme_override_constants/separation = 14
 
 [node name="Title" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "MAZMORRA COOPERATIVA"
+text = "COOPERATIVE DUNGEON"
 horizontal_alignment = 1
 theme_override_font_sizes/font_size = 28
 
 [node name="CharacterLabel" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "Personaje"
+text = "Character"
 
 [node name="Character" type="OptionButton" parent="MultiplayerMenu/MenuPanel/VBox"]
 
 [node name="NameLabel" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "Nombre del jugador"
+text = "Player name"
 
 [node name="PlayerName" type="LineEdit" parent="MultiplayerMenu/MenuPanel/VBox"]
-placeholder_text = "Escribe tu nombre"
+placeholder_text = "Enter your name"
 max_length = 18
 
 [node name="AddressLabel" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "Servidor"
+text = "Server"
 
 [node name="Address" type="OptionButton" parent="MultiplayerMenu/MenuPanel/VBox"]
 
 [node name="PortLabel" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "Puerto"
+text = "Port"
 
 [node name="Port" type="SpinBox" parent="MultiplayerMenu/MenuPanel/VBox"]
 min_value = 1024.0
@@ -428,17 +522,192 @@ allow_greater = false
 allow_lesser = false
 
 [node name="Host" type="Button" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "CREAR PARTIDA"
+text = "HOST GAME"
 
 [node name="Join" type="Button" parent="MultiplayerMenu/MenuPanel/VBox"]
-text = "UNIRSE"
+text = "JOIN GAME"
 
 [node name="Status" type="Label" parent="MultiplayerMenu/MenuPanel/VBox"]
 custom_minimum_size = Vector2(0, 52)
-text = "El anfitrión y los invitados deben usar el mismo puerto."
+text = "The host and all players must use the same port."
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 2
 
+[node name="PauseMenu" type="CanvasLayer" parent="."]
+visible = false
+layer = 20
+
+[node name="Shade" type="ColorRect" parent="PauseMenu"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.005, 0.008, 0.015, 0.72)
+
+[node name="Panel" type="PanelContainer" parent="PauseMenu"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -180.0
+offset_top = -130.0
+offset_right = 180.0
+offset_bottom = 130.0
+theme_override_styles/panel = SubResource("Menu_panel_style")
+
+[node name="VBox" type="VBoxContainer" parent="PauseMenu/Panel"]
+theme_override_constants/separation = 22
+alignment = 1
+
+[node name="Title" type="Label" parent="PauseMenu/Panel/VBox"]
+text = "PAUSE"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+
+[node name="Login" type="Button" parent="PauseMenu/Panel/VBox"]
+custom_minimum_size = Vector2(280, 54)
+text = "LOGIN"
+
+[node name="Exit" type="Button" parent="PauseMenu/Panel/VBox"]
+custom_minimum_size = Vector2(280, 54)
+text = "EXIT"
+
+[node name="InventoryWindow" type="CanvasLayer" parent="."]
+visible = false
+layer = 15
+
+[node name="Shade" type="ColorRect" parent="InventoryWindow"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.015, 0.008, 0.005, 0.3)
+
+[node name="Panel" type="PanelContainer" parent="InventoryWindow"]
+anchor_left = 0.66
+anchor_top = 0.03
+anchor_right = 0.98
+anchor_bottom = 0.97
+theme_override_styles/panel = SubResource("Gothic_panel_style")
+
+[node name="VBox" type="VBoxContainer" parent="InventoryWindow/Panel"]
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="Title" type="Label" parent="InventoryWindow/Panel/VBox"]
+text = "◆  INVENTORY  ◆"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.86, 0.66, 0.25, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+theme_override_constants/shadow_offset_x = 3
+theme_override_constants/shadow_offset_y = 3
+theme_override_font_sizes/font_size = 31
+
+[node name="Hint" type="Label" parent="InventoryWindow/Panel/VBox"]
+text = "Press I or Escape to close"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.62, 0.51, 0.34, 1)
+
+[node name="TopSeparator" type="HSeparator" parent="InventoryWindow/Panel/VBox"]
+theme_override_styles/separator = SubResource("Gothic_separator_style")
+
+[node name="EquipmentLabel" type="Label" parent="InventoryWindow/Panel/VBox"]
+text = "EQUIPMENT"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.72, 0.56, 0.24, 1)
+theme_override_font_sizes/font_size = 16
+
+[node name="EquipmentArea" type="Control" parent="InventoryWindow/Panel/VBox"]
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 1.0
+
+[node name="BottomSeparator" type="HSeparator" parent="InventoryWindow/Panel/VBox"]
+theme_override_styles/separator = SubResource("Gothic_separator_style")
+
+[node name="BackpackLabel" type="Label" parent="InventoryWindow/Panel/VBox"]
+text = "BACKPACK"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.72, 0.56, 0.24, 1)
+theme_override_font_sizes/font_size = 16
+
+[node name="BackpackScroll" type="ScrollContainer" parent="InventoryWindow/Panel/VBox"]
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 1.0
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 0
+
+[node name="Center" type="CenterContainer" parent="InventoryWindow/Panel/VBox/BackpackScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Grid" type="GridContainer" parent="InventoryWindow/Panel/VBox/BackpackScroll/Center"]
+layout_mode = 2
+theme_override_constants/h_separation = 5
+theme_override_constants/v_separation = 5
+columns = 10
+
+[node name="CharacterWindow" type="CanvasLayer" parent="."]
+visible = false
+layer = 15
+
+[node name="Shade" type="ColorRect" parent="CharacterWindow"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.015, 0.008, 0.005, 0.3)
+
+[node name="Panel" type="PanelContainer" parent="CharacterWindow"]
+anchor_left = 0.02
+anchor_top = 0.03
+anchor_right = 0.34
+anchor_bottom = 0.97
+theme_override_styles/panel = SubResource("Gothic_panel_style")
+
+[node name="VBox" type="VBoxContainer" parent="CharacterWindow/Panel"]
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Title" type="Label" parent="CharacterWindow/Panel/VBox"]
+text = "◆  CHARACTER  ◆"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.86, 0.66, 0.25, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+theme_override_constants/shadow_offset_x = 3
+theme_override_constants/shadow_offset_y = 3
+theme_override_font_sizes/font_size = 31
+
+[node name="Hint" type="Label" parent="CharacterWindow/Panel/VBox"]
+text = "Press C or Escape to close"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.62, 0.51, 0.34, 1)
+
+[node name="Separator" type="HSeparator" parent="CharacterWindow/Panel/VBox"]
+theme_override_styles/separator = SubResource("Gothic_separator_style")
+
+[node name="Details" type="Label" parent="CharacterWindow/Panel/VBox"]
+custom_minimum_size = Vector2(380, 390)
+text = "Name:\n\nClass:\n\nHealth:\n\nBase damage:\n\nSecondary:"
+vertical_alignment = 1
+theme_override_colors/font_color = Color(0.88, 0.79, 0.61, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 20
+
 [connection signal="pressed" from="MultiplayerMenu/MenuPanel/VBox/Host" to="." method="_on_host_pressed"]
 [connection signal="pressed" from="MultiplayerMenu/MenuPanel/VBox/Join" to="." method="_on_join_pressed"]
+[connection signal="pressed" from="PauseMenu/Panel/VBox/Login" to="." method="_on_login_pressed"]
+[connection signal="pressed" from="PauseMenu/Panel/VBox/Exit" to="." method="_on_exit_pressed"]

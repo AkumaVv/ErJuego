@@ -87,7 +87,7 @@ func _brick_wall_x(x: float) -> void:
 func _model(file_name: String, position_: Vector3, rotation_y_degrees := 0.0, scale_ := 1.0) -> Node3D:
 	var packed_scene := load(KAYKIT + file_name) as PackedScene
 	if not packed_scene:
-		push_warning("No se pudo cargar el modelo KayKit: " + file_name)
+		push_warning("Could not load KayKit model: " + file_name)
 		return null
 	var model := packed_scene.instantiate() as Node3D
 	model.position = position_
@@ -130,7 +130,7 @@ func _build_room() -> void:
 func _asset_model(file_name: String, position_: Vector3, rotation_degrees := Vector3.ZERO, collision := false) -> Node3D:
 	var packed_scene := load(KAYKIT + file_name) as PackedScene
 	if not packed_scene:
-		push_error("No se pudo cargar el modelo KayKit: " + file_name)
+		push_error("Could not load KayKit model: " + file_name)
 		return null
 	var model := packed_scene.instantiate() as Node3D
 	model.position = position_

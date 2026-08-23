@@ -4,6 +4,10 @@ const CHARACTER_BASE := "res://addons/kaykit_character_pack_adventures/Character
 const CHARACTER_FILES := ["Knight.glb", "Rogue_Hooded.glb", "Mage.glb", "Barbarian.glb"]
 const CHARACTER_SCALES := [0.73, 0.80, 0.60, 0.75]
 const WEAPON_BASE := "res://addons/kaykit_character_pack_adventures/Assets/gltf/"
+const ACCESSORY_MESHES := ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Round_Shield", "Spike_Shield", "1H_Sword", "2H_Sword", "Knife_Offhand", "1H_Crossbow", "2H_Crossbow", "Knife", "Throwable", "Spellbook", "Spellbook_open", "1H_Wand", "2H_Staff", "1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "2H_Axe", "Mug"]
+const CLASS_ACCESSORIES := [[], ["1H_Crossbow"], [], []]
+const PRIMARY_ATTACK_DAMAGE := 5
+const SECONDARY_DAMAGE := 6
 
 @export var move_speed := 5.5
 @export var sprint_speed := 9.0
@@ -11,19 +15,21 @@ const WEAPON_BASE := "res://addons/kaykit_character_pack_adventures/Assets/gltf/
 @export var deceleration := 55.0
 @export var jump_velocity := 5.0
 @export var mouse_sensitivity := 0.0022
-@export var max_stamina := 100.0
-@export var stamina_drain_per_second := 28.0
-@export var stamina_regen_per_second := 20.0
+@export var max_health := 100
 
 @onready var head: Node3D = $Head
-@onready var stamina_bar: ProgressBar = get_node_or_null("../Interface/StaminaBar")
+@onready var health_bar: ProgressBar = get_node_or_null("../Interface/HealthBar")
+@onready var health_value: Label = get_node_or_null("../Interface/HealthBar/Value")
+@onready var secondary_cooldown_bar: TextureProgressBar = get_node_or_null("../Interface/SecondaryCooldown")
+@onready var secondary_cooldown_value: Label = get_node_or_null("../Interface/SecondaryCooldown/Value")
+@onready var secondary_cooldown_name: Label = get_node_or_null("../Interface/SecondaryCooldown/Name")
 @onready var sword: Node3D = $Head/Camera3D/Sword
 @onready var offhand: Node3D = $Head/Camera3D/Offhand
 @onready var attack_ray: RayCast3D = $Head/Camera3D/AttackRay
 @onready var first_person_camera: Camera3D = $Head/Camera3D
 @onready var third_person_camera: Camera3D = $Head/ThirdPersonArm/ThirdPersonCamera
 
-var stamina := max_stamina
+var health := max_health
 var attack_in_progress := false
 var sword_rest_position := Vector3.ZERO
 var sword_rest_rotation := Vector3.ZERO
@@ -42,12 +48,17 @@ var character_class := 0
 var blocking := false
 var barbarian_left_next := true
 var right_hand_marker: BoneAttachment3D
+var controls_enabled := true
+var secondary_cooldown_duration := 0.0
+var secondary_cooldown_ends_at := 0.0
+var strength := 5
+var dexterity := 5
+var intelligence := 5
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-	if stamina_bar:
-		stamina_bar.max_value = max_stamina
-		stamina_bar.value = stamina
+	_update_health_ui()
+	_setup_secondary_cooldown_ui()
 	sword_rest_position = sword.position
 	sword_rest_rotation = sword.rotation_degrees
 	offhand_rest_position = offhand.position
@@ -55,6 +66,7 @@ func _ready() -> void:
 
 func configure_network_player(peer_id: int, character_index: int, _character_color: Color, display_name: String) -> void:
 	set_multiplayer_authority(peer_id)
+	add_to_group("chain_allies")
 	network_ready = true
 	remote_position = global_position
 	var local_player := is_multiplayer_authority()
@@ -65,16 +77,140 @@ func configure_network_player(peer_id: int, character_index: int, _character_col
 	$BodyVisual.visible = not local_player
 	$BodyVisual/Name.text = display_name
 	character_class = character_index
+	_setup_base_stats(character_index)
 	_load_character_model(character_index)
 	_setup_third_person_weapons(character_index)
 	if local_player:
 		_setup_first_person_weapons(character_index)
+		_set_camera_mode(false)
+		_update_health_ui()
+		_update_secondary_cooldown_ui()
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _setup_base_stats(class_index: int) -> void:
+	strength = 5
+	dexterity = 5
+	intelligence = 5
+	match class_index:
+		0, 3:
+			strength = 10
+		1:
+			dexterity = 10
+		2:
+			intelligence = 10
+
+func receive_damage(amount: int, damage_type := "physical") -> void:
+	if amount <= 0 or health <= 0:
+		return
+	var final_damage := amount
+	if character_class == 0 and blocking:
+		var received_ratio := 0.30 if damage_type == "magic" else 0.25
+		final_damage = maxi(1, ceili(float(amount) * received_ratio))
+	health = maxi(0, health - final_damage)
+	_update_health_ui()
+	_spawn_floating_number(final_damage, false)
+
+@rpc("any_peer", "call_local", "reliable")
+func receive_server_damage(amount: int, damage_type := "physical") -> void:
+	if multiplayer.has_multiplayer_peer() and multiplayer.get_remote_sender_id() not in [0, 1]:
+		return
+	receive_damage(amount, damage_type)
+
+@rpc("any_peer", "call_local", "reliable")
+func receive_network_healing(amount: int) -> void:
+	restore_health(amount)
+
+func is_chain_ally() -> bool:
+	return true
+
+func receive_chain_healing(amount: int) -> void:
+	var authority_id := get_multiplayer_authority()
+	if authority_id == multiplayer.get_unique_id() or not multiplayer.has_multiplayer_peer():
+		restore_health(amount)
+	else:
+		receive_network_healing.rpc_id(authority_id, amount)
+
+func restore_health(amount: int) -> void:
+	if amount <= 0 or health <= 0:
+		return
+	var restored := mini(amount, max_health - health)
+	if restored <= 0:
+		return
+	health += restored
+	_update_health_ui()
+	_spawn_floating_number(restored, true)
+
+func _spawn_floating_number(amount: int, healing: bool) -> void:
+	var label := Label3D.new()
+	label.text = ("+" if healing else "-") + str(amount)
+	label.modulate = Color(0.2, 1.0, 0.3) if healing else Color(1.0, 0.12, 0.10)
+	label.font_size = 42
+	label.outline_size = 8
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	get_parent().add_child(label)
+	label.global_position = global_position + Vector3(0.0, 2.25, 0.0)
+	var tween := label.create_tween().set_parallel(true)
+	tween.tween_property(label, "global_position", label.global_position + Vector3(0.0, 0.85, 0.0), 0.9)
+	tween.tween_property(label, "modulate:a", 0.0, 0.9)
+	tween.chain().tween_callback(label.queue_free)
+
+func _update_health_ui() -> void:
+	if health_bar:
+		health_bar.max_value = max_health
+		health_bar.value = health
+	if health_value:
+		health_value.text = "%d/%d" % [health, max_health]
+
+func _setup_secondary_cooldown_ui() -> void:
+	if not secondary_cooldown_bar:
+		return
+	var under_image := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	var progress_image := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	under_image.fill(Color.TRANSPARENT)
+	progress_image.fill(Color.TRANSPARENT)
+	for y in range(96):
+		for x in range(96):
+			var distance := Vector2(x - 47.5, y - 47.5).length()
+			if distance <= 45.0:
+				under_image.set_pixel(x, y, Color(0.10, 0.018, 0.025, 0.94))
+				progress_image.set_pixel(x, y, Color(0.78, 0.07, 0.10, 0.98))
+	secondary_cooldown_bar.texture_under = ImageTexture.create_from_image(under_image)
+	secondary_cooldown_bar.texture_progress = ImageTexture.create_from_image(progress_image)
+	secondary_cooldown_bar.radial_initial_angle = 0.0
+	secondary_cooldown_bar.radial_fill_degrees = 360.0
+	secondary_cooldown_bar.radial_center_offset = Vector2.ZERO
+
+func _process(_delta: float) -> void:
+	if network_ready and is_multiplayer_authority():
+		_update_secondary_cooldown_ui()
+
+func _secondary_available(cooldown: float) -> bool:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now < secondary_cooldown_ends_at:
+		return false
+	secondary_cooldown_duration = cooldown
+	secondary_cooldown_ends_at = now + cooldown
+	_update_secondary_cooldown_ui()
+	return true
+
+func _update_secondary_cooldown_ui() -> void:
+	if not secondary_cooldown_bar:
+		return
+	var names := ["BLOCK", "DOUBLE BOLT", "CHAIN", "TRIPLE WHIRLWIND"]
+	secondary_cooldown_name.text = names[character_class]
+	if secondary_cooldown_duration <= 0.0:
+		secondary_cooldown_bar.value = 100.0
+		secondary_cooldown_value.text = "RMB"
+		return
+	var remaining := maxf(0.0, secondary_cooldown_ends_at - Time.get_ticks_msec() / 1000.0)
+	secondary_cooldown_bar.value = 100.0 * (1.0 - remaining / secondary_cooldown_duration)
+	secondary_cooldown_value.text = "RMB" if remaining <= 0.0 else "%.1f" % remaining
 
 func _weapon_asset(file_name: String, parent: Node3D, position_ := Vector3.ZERO, rotation_ := Vector3.ZERO, scale_ := 1.0) -> Node3D:
 	var packed := load(WEAPON_BASE + file_name) as PackedScene
 	if not packed:
-		push_error("No se pudo cargar el arma: " + file_name)
+		push_error("Could not load weapon: " + file_name)
 		return null
 	var weapon := packed.instantiate() as Node3D
 	weapon.position = position_
@@ -92,20 +228,20 @@ func _setup_first_person_weapons(class_index: int) -> void:
 	offhand.rotation_degrees = offhand_rest_rotation
 	match class_index:
 		0:
-			sword.position = Vector3(0.58, -0.62, -1.18)
+			sword.position = Vector3(0.58, -0.74, -1.18)
 			offhand.position = Vector3(-0.64, -0.60, -1.26)
 			_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.24, 0.0), Vector3.ZERO, 0.56)
 			_weapon_asset("shield_badge.gltf", offhand, Vector3.ZERO, Vector3(0.0, 180.0, 0.0), 0.54)
 		1:
-			sword.position = Vector3(0.08, -0.64, -1.22)
+			sword.position = Vector3(0.08, -0.76, -1.22)
 			sword.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-			_weapon_asset("crossbow_2handed.gltf", sword, Vector3.ZERO, Vector3.ZERO, 0.46)
+			_weapon_asset("crossbow_1handed.gltf", sword, Vector3.ZERO, Vector3.ZERO, 0.52)
 		2:
-			sword.position = Vector3(0.60, -0.62, -1.22)
+			sword.position = Vector3(0.60, -0.76, -1.22)
 			_weapon_asset("wand.gltf", sword, Vector3(0.0, 0.16, 0.0), Vector3.ZERO, 0.68)
 		3:
-			sword.position = Vector3(0.66, -0.66, -1.28)
-			offhand.position = Vector3(-0.66, -0.66, -1.28)
+			sword.position = Vector3(0.66, -0.80, -1.28)
+			offhand.position = Vector3(-0.66, -0.80, -1.28)
 			_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.22, 0.0), Vector3.ZERO, 0.52)
 			_weapon_asset("sword_1handed.gltf", offhand, Vector3(0.0, 0.22, 0.0), Vector3.ZERO, 0.52)
 	sword_rest_position = sword.position
@@ -123,21 +259,30 @@ func _setup_third_person_weapons(class_index: int) -> void:
 	right_hand_marker = BoneAttachment3D.new()
 	right_hand_marker.bone_name = "handslot.r"
 	skeleton.add_child(right_hand_marker)
-	if class_index == 3:
-		_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
-		_attach_to_hand(skeleton, "handslot.l", "sword_1handed.gltf")
+	match class_index:
+		0:
+			_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
+			_attach_to_hand(skeleton, "handslot.l", "shield_badge.gltf", Vector3.ZERO, Vector3.ZERO, 0.92)
+		1:
+			# La ballesta 1H integrada ya tiene el ajuste correcto para esta mano.
+			pass
+		2:
+			_attach_to_hand(skeleton, "handslot.r", "wand.gltf", Vector3.ZERO, Vector3.ZERO, 1.08)
+		3:
+			_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
+			_attach_to_hand(skeleton, "handslot.l", "sword_1handed.gltf")
 
-func _attach_to_hand(skeleton: Skeleton3D, bone_name: String, file_name: String) -> void:
+func _attach_to_hand(skeleton: Skeleton3D, bone_name: String, file_name: String, position_ := Vector3.ZERO, rotation_ := Vector3.ZERO, scale_ := 1.0) -> void:
 	var attachment := BoneAttachment3D.new()
 	attachment.bone_name = bone_name
 	skeleton.add_child(attachment)
-	_weapon_asset(file_name, attachment)
+	_weapon_asset(file_name, attachment, position_, rotation_, scale_)
 
 func _load_character_model(character_index: int) -> void:
 	character_index = clampi(character_index, 0, CHARACTER_FILES.size() - 1)
 	var packed := load(CHARACTER_BASE + CHARACTER_FILES[character_index]) as PackedScene
 	if not packed:
-		push_error("No se pudo cargar el personaje: " + CHARACTER_FILES[character_index])
+		push_error("Could not load character: " + CHARACTER_FILES[character_index])
 		return
 	character_model = packed.instantiate() as Node3D
 	character_model.name = "AdventurerModel"
@@ -146,24 +291,34 @@ func _load_character_model(character_index: int) -> void:
 	character_model.rotation_degrees.y = 180.0
 	character_model.scale = Vector3.ONE * CHARACTER_SCALES[character_index]
 	$BodyVisual.add_child(character_model)
+	_hide_placeholder_body()
 	_filter_character_accessories(character_index)
 	var animation_players := character_model.find_children("*", "AnimationPlayer", true, false)
 	if not animation_players.is_empty():
 		character_animation = animation_players[0] as AnimationPlayer
-		_play_character_animation("Idle")
+		_play_character_animation("1H_Ranged_Aiming" if character_index == 1 else "Idle")
 
 func _filter_character_accessories(class_index: int) -> void:
-	var accessories := ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Round_Shield", "Spike_Shield", "1H_Sword", "2H_Sword", "Knife_Offhand", "1H_Crossbow", "2H_Crossbow", "Knife", "Throwable", "Spellbook", "Spellbook_open", "1H_Wand", "2H_Staff", "1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "2H_Axe", "Mug"]
-	var allowed: Array[String] = []
-	match class_index:
-		0: allowed = ["1H_Sword", "Badge_Shield"]
-		1: allowed = ["2H_Crossbow"]
-		2: allowed = ["1H_Wand"]
+	var allowed: Array = CLASS_ACCESSORIES[class_index]
 	for mesh_node in character_model.find_children("*", "MeshInstance3D", true, false):
 		var mesh_instance := mesh_node as MeshInstance3D
 		var mesh_name := str(mesh_instance.name)
-		if mesh_name in accessories:
-			mesh_instance.visible = mesh_name in allowed
+		if mesh_name in ACCESSORY_MESHES:
+			if mesh_name in allowed:
+				mesh_instance.visible = true
+			else:
+				# Las animaciones importadas pueden restaurar tanto la visibilidad
+				# como la malla. Sacar el nodo del árbol evita definitivamente que
+				# reaparezcan armas que la clase no utiliza.
+				mesh_instance.get_parent().remove_child(mesh_instance)
+				mesh_instance.queue_free()
+
+func _hide_placeholder_body() -> void:
+	for child in $BodyVisual.get_children():
+		if child is MeshInstance3D:
+			var placeholder := child as MeshInstance3D
+			placeholder.visible = false
+			placeholder.layers = 0
 
 func _play_character_animation(animation_name: String, speed_scale := 1.0) -> void:
 	if not character_animation:
@@ -177,7 +332,7 @@ func _play_character_animation(animation_name: String, speed_scale := 1.0) -> vo
 	character_animation.play(animation_name, 0.16)
 
 func _input(event: InputEvent) -> void:
-	if not network_ready or not is_multiplayer_authority():
+	if not controls_enabled or not network_ready or not is_multiplayer_authority():
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_F3:
@@ -190,8 +345,6 @@ func _input(event: InputEvent) -> void:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		head.rotate_x(-event.relative.y * mouse_sensitivity)
 		head.rotation.x = clamp(head.rotation.x, deg_to_rad(-85.0), deg_to_rad(85.0))
-	if event.is_action_pressed("ui_cancel"):
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if event is InputEventMouseButton:
 		if event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -201,16 +354,59 @@ func _input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			if character_class == 0:
 				_set_blocking(event.pressed)
-			elif character_class == 3 and event.pressed:
-				_whirlwind()
+			elif event.pressed:
+				match character_class:
+					1:
+						_rogue_double_piercing()
+					2:
+						_mage_chain()
+					3:
+						_whirlwind()
+
+func set_controls_enabled(enabled: bool) -> void:
+	controls_enabled = enabled
+	if not enabled:
+		blocking = false
 
 func _set_camera_mode(use_third_person: bool) -> void:
 	third_person_enabled = use_third_person
 	first_person_camera.current = not use_third_person
 	third_person_camera.current = use_third_person
+	# Los modelos de aventura no tienen brazos FPS separados: la cámara queda
+	# dentro de mangas, casco y escudo. En F1 usamos las armas de cámara y en F3
+	# el esqueleto completo; ambas animaciones conservan la misma duración.
 	sword.visible = not use_third_person
-	offhand.visible = not use_third_person
-	$BodyVisual.visible = use_third_person
+	offhand.visible = not use_third_person and character_class in [0, 3]
+	$BodyVisual.visible = true
+	$BodyVisual/Name.visible = use_third_person
+	first_person_camera.set_cull_mask_value(2, false)
+	third_person_camera.set_cull_mask_value(2, true)
+	_set_character_mesh_view(use_third_person)
+
+func _set_character_mesh_view(full_body: bool) -> void:
+	if not character_model:
+		return
+	character_model.position = Vector3(0.0, -0.90, 0.0)
+	var allowed: Array = CLASS_ACCESSORIES[character_class]
+	for mesh_node in character_model.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := mesh_node as MeshInstance3D
+		var mesh_name := str(mesh_instance.name)
+		var accessory := mesh_name in ACCESSORY_MESHES
+		var arm := mesh_name.ends_with("_ArmLeft") or mesh_name.ends_with("_ArmRight")
+		var attached_weapon := _has_bone_attachment_parent(mesh_instance)
+		var show_mesh := attached_weapon or not accessory or mesh_name in allowed
+		mesh_instance.visible = show_mesh
+		# La capa 2 contiene exclusivamente el cuerpo del jugador local. La cámara
+		# F1 no dibuja esa capa, evitando cualquier casco o manga dentro de ella.
+		mesh_instance.layers = 2 if show_mesh else 0
+
+func _has_bone_attachment_parent(node: Node) -> bool:
+	var current := node.get_parent()
+	while current and current != character_model:
+		if current is BoneAttachment3D:
+			return true
+		current = current.get_parent()
+	return false
 
 func _attack() -> void:
 	if attack_in_progress or blocking:
@@ -228,16 +424,15 @@ func _attack() -> void:
 func _start_melee(animation_name: String, pivot: Node3D, rest_position: Vector3, rest_rotation: Vector3, attack_rotation: Vector3) -> void:
 	attack_in_progress = true
 	_remote_character_action.rpc(animation_name, 0.32)
-	if third_person_enabled:
-		_play_timed_character_animation(animation_name, 0.32)
+	_play_timed_character_animation(animation_name, 0.32)
 	_play_attack_animation(pivot, rest_position, rest_rotation, attack_rotation, true)
 
 func _play_attack_animation(pivot: Node3D, rest_position: Vector3, rest_rotation: Vector3, attack_rotation: Vector3, apply_hit: bool) -> void:
 	var tween := create_tween()
 	tween.set_trans(Tween.TRANS_QUAD)
 	tween.set_ease(Tween.EASE_OUT)
-	tween.tween_property(pivot, "rotation_degrees", attack_rotation, 0.10)
-	tween.parallel().tween_property(pivot, "position", rest_position + Vector3(0.0, 0.03, -0.62), 0.10)
+	tween.tween_property(pivot, "rotation_degrees", attack_rotation, 0.12)
+	tween.parallel().tween_property(pivot, "position", rest_position + Vector3(0.0, 0.03, -0.62), 0.12)
 	if apply_hit:
 		tween.tween_callback(_apply_sword_hit)
 	tween.set_ease(Tween.EASE_IN_OUT)
@@ -302,8 +497,7 @@ func _shoot_crossbow() -> void:
 	_remote_ranged_effect.rpc(0, origin, end)
 	_spawn_ranged_effect(0, origin, end)
 	_remote_character_action.rpc("2H_Ranged_Shoot", 0.55)
-	if third_person_enabled:
-		_play_timed_character_animation("2H_Ranged_Shoot", 0.55)
+	_play_timed_character_animation("2H_Ranged_Shoot", 0.55)
 	_animate_ranged_weapon(Vector3(0.0, 0.03, 0.16), 0.55)
 	_deliver_projectile_hit(shot.collider, origin.distance_to(end) / 18.0)
 	_finish_local_action(0.55)
@@ -318,13 +512,108 @@ func _cast_magic_ray() -> void:
 	_remote_ranged_effect.rpc(1, origin, end)
 	_spawn_ranged_effect(1, origin, end)
 	_remote_character_action.rpc("Spellcast_Shoot", 0.48)
-	if third_person_enabled:
-		_play_timed_character_animation("Spellcast_Shoot", 0.48)
+	_play_timed_character_animation("Spellcast_Shoot", 0.48)
 	_animate_ranged_weapon(Vector3(-0.08, 0.18, -0.28), 0.48)
 	var target: Object = shot.collider
 	if target and target.has_method("receive_hit"):
-		target.receive_hit(1)
+		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
 	_finish_local_action(0.48)
+
+func _rogue_double_piercing() -> void:
+	if attack_in_progress or not _secondary_available(2.0):
+		return
+	attack_in_progress = true
+	_remote_character_action.rpc("1H_Ranged_Shoot", 0.62)
+	_play_timed_character_animation("1H_Ranged_Shoot", 0.62)
+	for shot_index in range(2):
+		var origin := _weapon_muzzle_position()
+		var piercing := _piercing_query(22.0, 2)
+		var end: Vector3 = piercing.end
+		_remote_ranged_effect.rpc(0, origin, end)
+		_spawn_ranged_effect(0, origin, end)
+		_animate_ranged_weapon(Vector3(0.0, 0.025, 0.13), 0.20)
+		for target in piercing.targets:
+			if is_instance_valid(target) and target.has_method("receive_hit"):
+				target.receive_hit(SECONDARY_DAMAGE)
+		if shot_index == 0:
+			await get_tree().create_timer(0.28).timeout
+	await get_tree().create_timer(0.34).timeout
+	_finish_attack()
+
+func _piercing_query(max_range: float, max_targets: int) -> Dictionary:
+	var direction := -first_person_camera.global_transform.basis.z.normalized()
+	var ray_start := first_person_camera.global_position
+	var ray_end := ray_start + direction * max_range
+	var exclusions: Array[RID] = [get_rid()]
+	var targets: Array[Object] = []
+	var final_end := ray_end
+	for step in range(12):
+		var query := PhysicsRayQueryParameters3D.create(ray_start, ray_end)
+		query.exclude = exclusions
+		var result := get_world_3d().direct_space_state.intersect_ray(query)
+		if result.is_empty():
+			break
+		var collider: Object = result.collider
+		var hit_position: Vector3 = result.position
+		final_end = hit_position
+		if collider is CollisionObject3D:
+			exclusions.append((collider as CollisionObject3D).get_rid())
+		if collider.has_method("is_chain_ally") and collider.is_chain_ally():
+			ray_start = hit_position + direction * 0.06
+			continue
+		if collider.has_method("receive_hit"):
+			targets.append(collider)
+			if targets.size() >= max_targets:
+				break
+			ray_start = hit_position + direction * 0.06
+			continue
+		break
+	return {"end": final_end, "targets": targets}
+
+func _mage_chain() -> void:
+	if attack_in_progress or not _secondary_available(3.0):
+		return
+	attack_in_progress = true
+	var origin := _weapon_muzzle_position()
+	var shot := _ranged_query(18.0, origin)
+	var end: Vector3 = shot.end
+	_remote_ranged_effect.rpc(1, origin, end)
+	_spawn_ranged_effect(1, origin, end)
+	_remote_character_action.rpc("Spellcast_Shoot", 0.72)
+	_play_timed_character_animation("Spellcast_Shoot", 0.72)
+	_animate_ranged_weapon(Vector3(-0.08, 0.18, -0.28), 0.72)
+	var primary: Object = shot.collider
+	if primary and (primary.has_method("receive_hit") or primary.has_method("is_chain_ally")):
+		_apply_chain_effect(primary)
+		var primary_node := primary as Node3D
+		var candidates: Array[Node3D] = []
+		for node in get_tree().get_nodes_in_group("damageable") + get_tree().get_nodes_in_group("chain_allies"):
+			if node is Node3D and node != primary and not candidates.has(node):
+				if primary_node.global_position.distance_to((node as Node3D).global_position) <= 4.0:
+					candidates.append(node as Node3D)
+		candidates.sort_custom(func(a: Node3D, b: Node3D) -> bool:
+			return primary_node.global_position.distance_squared_to(a.global_position) < primary_node.global_position.distance_squared_to(b.global_position))
+		var previous_point := _target_point(primary_node)
+		for index in range(mini(3, candidates.size())):
+			var chained := candidates[index]
+			var chained_point := _target_point(chained)
+			_remote_ranged_effect.rpc(1, previous_point, chained_point)
+			_spawn_ranged_effect(1, previous_point, chained_point)
+			_apply_chain_effect(chained)
+			previous_point = chained_point
+	await get_tree().create_timer(0.72).timeout
+	_finish_attack()
+
+func _apply_chain_effect(target: Object) -> void:
+	if target.has_method("is_chain_ally") and target.is_chain_ally():
+		var healing := maxi(1, ceili(PRIMARY_ATTACK_DAMAGE * 0.05))
+		if target.has_method("receive_chain_healing"):
+			target.receive_chain_healing(healing)
+	elif target.has_method("receive_hit"):
+		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
+
+func _target_point(target: Node3D) -> Vector3:
+	return target.global_position + Vector3(0.0, 1.25, 0.0)
 
 func _weapon_muzzle_position() -> Vector3:
 	if third_person_enabled and right_hand_marker:
@@ -356,7 +645,7 @@ func _animate_ranged_weapon(offset: Vector3, duration: float) -> void:
 func _deliver_projectile_hit(target: Object, travel_time: float) -> void:
 	await get_tree().create_timer(travel_time).timeout
 	if is_instance_valid(target) and target.has_method("receive_hit"):
-		target.receive_hit(1)
+		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
 
 func _finish_local_action(duration: float) -> void:
 	await get_tree().create_timer(duration).timeout
@@ -374,7 +663,7 @@ func _spawn_ranged_effect(effect_type: int, origin: Vector3, end: Vector3) -> vo
 		var projectile := packed.instantiate() as Node3D
 		get_parent().add_child(projectile)
 		projectile.global_position = origin
-		projectile.scale = Vector3.ONE * 0.22
+		projectile.scale = Vector3.ONE * 0.32
 		projectile.look_at(end, Vector3.UP)
 		projectile.rotate_object_local(Vector3.RIGHT, deg_to_rad(-90.0))
 		var glow := OmniLight3D.new()
@@ -437,25 +726,44 @@ func _spawn_magic_particles(position_: Vector3) -> void:
 		tween.chain().tween_callback(particle.queue_free)
 
 func _whirlwind() -> void:
-	if attack_in_progress or blocking:
+	if attack_in_progress or blocking or not _secondary_available(4.0):
 		return
 	attack_in_progress = true
-	_remote_character_action.rpc("2H_Melee_Attack_Spinning", 0.55)
-	if third_person_enabled:
-		_play_timed_character_animation("2H_Melee_Attack_Spinning", 0.55)
-	var tween := create_tween().set_trans(Tween.TRANS_QUAD)
-	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation + Vector3(0.0, 0.0, -180.0), 0.20)
-	tween.parallel().tween_property(offhand, "rotation_degrees", offhand_rest_rotation + Vector3(0.0, 0.0, 180.0), 0.20)
-	tween.tween_callback(_apply_whirlwind_hit)
-	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation, 0.35)
-	tween.parallel().tween_property(offhand, "rotation_degrees", offhand_rest_rotation, 0.35)
+	_remote_character_action.rpc("2H_Melee_Attack_Spinning", 0.78)
+	_play_timed_character_animation("2H_Melee_Attack_Spinning", 0.78)
+	_run_barbarian_pulses()
+	var tween := create_tween().set_trans(Tween.TRANS_LINEAR)
+	# Dos medias vueltas consecutivas: las armas no regresan hacia atrás a mitad
+	# del ataque, sino que completan el mismo giro continuo de 360° que el cuerpo.
+	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation + Vector3(0.0, 0.0, -180.0), 0.39)
+	tween.parallel().tween_property(offhand, "rotation_degrees", offhand_rest_rotation + Vector3(0.0, 0.0, 180.0), 0.39)
+	tween.parallel().tween_property(sword, "position", offhand_rest_position + Vector3(0.10, 0.10, -0.08), 0.39)
+	tween.parallel().tween_property(offhand, "position", sword_rest_position + Vector3(-0.10, 0.10, -0.08), 0.39)
+	tween.tween_property(sword, "rotation_degrees", sword_rest_rotation + Vector3(0.0, 0.0, -360.0), 0.39)
+	tween.parallel().tween_property(offhand, "rotation_degrees", offhand_rest_rotation + Vector3(0.0, 0.0, 360.0), 0.39)
+	tween.parallel().tween_property(sword, "position", sword_rest_position, 0.39)
+	tween.parallel().tween_property(offhand, "position", offhand_rest_position, 0.39)
+	tween.tween_callback(_reset_whirlwind_weapons)
 	tween.tween_callback(_finish_attack)
+
+func _reset_whirlwind_weapons() -> void:
+	sword.rotation_degrees = sword_rest_rotation
+	offhand.rotation_degrees = offhand_rest_rotation
+	sword.position = sword_rest_position
+	offhand.position = offhand_rest_position
 
 func _apply_whirlwind_hit() -> void:
 	for target in get_tree().get_nodes_in_group("damageable"):
-		if target is Node3D and global_position.distance_to((target as Node3D).global_position) <= 2.6:
+		if target is Node3D and global_position.distance_to((target as Node3D).global_position) <= 4.0:
 			if target.has_method("receive_hit"):
-				target.receive_hit(2)
+				target.receive_hit(SECONDARY_DAMAGE)
+			if target.has_method("receive_knockback"):
+				target.receive_knockback(global_position, 0.32)
+
+func _run_barbarian_pulses() -> void:
+	for pulse in range(3):
+		await get_tree().create_timer(0.13 if pulse == 0 else 0.26).timeout
+		_apply_whirlwind_hit()
 
 func _apply_sword_hit() -> void:
 	attack_ray.force_raycast_update()
@@ -463,7 +771,7 @@ func _apply_sword_hit() -> void:
 		return
 	var target := attack_ray.get_collider()
 	if target and target.has_method("receive_hit"):
-		target.receive_hit(1)
+		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
 
 func _finish_attack() -> void:
 	attack_in_progress = false
@@ -485,16 +793,10 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("jump") and is_on_floor():
 		velocity.y = jump_velocity
 
-	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var input_vector := Input.get_vector("move_left", "move_right", "move_forward", "move_back") if controls_enabled else Vector2.ZERO
 	var direction := (transform.basis * Vector3(input_vector.x, 0.0, input_vector.y)).normalized()
-	var is_sprinting := Input.is_key_pressed(KEY_SHIFT) and not direction.is_zero_approx() and stamina > 0.0
+	var is_sprinting := Input.is_key_pressed(KEY_SHIFT) and not direction.is_zero_approx()
 	var current_speed := sprint_speed if is_sprinting else move_speed
-	if is_sprinting:
-		stamina = maxf(0.0, stamina - stamina_drain_per_second * delta)
-	else:
-		stamina = minf(max_stamina, stamina + stamina_regen_per_second * delta)
-	if stamina_bar:
-		stamina_bar.value = stamina
 	var horizontal_velocity := Vector3(velocity.x, 0.0, velocity.z)
 	if direction.is_zero_approx():
 		horizontal_velocity = horizontal_velocity.move_toward(Vector3.ZERO, deceleration * delta)
@@ -505,17 +807,21 @@ func _physics_process(delta: float) -> void:
 	velocity.z = horizontal_velocity.z
 	move_and_slide()
 	var movement_speed := Vector2(velocity.x, velocity.z).length()
+	var animation_motion := -movement_speed if input_vector.y > 0.15 else movement_speed
 	if not attack_in_progress and not blocking:
-		_update_movement_animation(movement_speed)
-	_sync_state.rpc(global_position, rotation.y, head.rotation.x, movement_speed)
+		_update_movement_animation(animation_motion)
+	_sync_state.rpc(global_position, rotation.y, head.rotation.x, animation_motion)
 
 func _update_movement_animation(movement_speed: float) -> void:
-	if movement_speed < 0.12:
-		_play_character_animation("Idle", 1.0)
-	elif movement_speed > move_speed + 0.7:
-		_play_character_animation("Running_A", clampf(movement_speed / sprint_speed * 1.35, 0.9, 1.5))
+	var absolute_speed := absf(movement_speed)
+	if absolute_speed < 0.12:
+		_play_character_animation("1H_Ranged_Aiming" if character_class == 1 else "Idle", 1.0)
+	elif movement_speed < 0.0:
+		_play_character_animation("Walking_Backwards", clampf(absolute_speed / move_speed * 1.25, 0.8, 1.4))
+	elif absolute_speed > move_speed + 0.7:
+		_play_character_animation("Running_A", clampf(absolute_speed / sprint_speed * 1.35, 0.9, 1.5))
 	else:
-		_play_character_animation("Walking_A", clampf(movement_speed / move_speed * 1.25, 0.8, 1.4))
+		_play_character_animation("Walking_A", clampf(absolute_speed / move_speed * 1.25, 0.8, 1.4))
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _sync_state(position_: Vector3, body_rotation: float, head_rotation: float, movement_speed: float) -> void:
