@@ -12,11 +12,11 @@ height = 1.8
 [sub_resource type="Environment" id="Environment_dungeon"]
 background_mode = 1
 background_color = Color(0.015, 0.02, 0.03, 1)
-ambient_light_source = 3
-ambient_light_color = Color(0.18, 0.22, 0.3, 1)
-ambient_light_energy = 0.45
+ambient_light_source = 2
+ambient_light_color = Color(0.48, 0.28, 0.14, 1)
+ambient_light_energy = 1.4
 fog_enabled = true
-fog_light_color = Color(0.08, 0.1, 0.14, 1)
+fog_light_color = Color(0.14, 0.085, 0.05, 1)
 fog_density = 0.012
 
 [sub_resource type="StyleBoxFlat" id="Crosshair_vertical"]
@@ -154,7 +154,7 @@ corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
 
 [sub_resource type="StyleBoxFlat" id="Gothic_panel_style"]
-bg_color = Color(0.045, 0.025, 0.018, 0.985)
+bg_color = Color(0.032, 0.0175, 0.0125, 0.99)
 border_width_left = 6
 border_width_top = 6
 border_width_right = 6
@@ -571,8 +571,56 @@ theme_override_font_sizes/font_size = 30
 custom_minimum_size = Vector2(280, 54)
 text = "LOGIN"
 
+[node name="ReturnToLobby" type="Button" parent="PauseMenu/Panel/VBox"]
+custom_minimum_size = Vector2(280, 54)
+text = "RETURN TO LOBBY"
+
 [node name="Exit" type="Button" parent="PauseMenu/Panel/VBox"]
 custom_minimum_size = Vector2(280, 54)
+text = "EXIT"
+
+[node name="DeathMenu" type="CanvasLayer" parent="."]
+visible = false
+layer = 30
+
+[node name="Shade" type="ColorRect" parent="DeathMenu"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.035, 0.0, 0.0, 0.82)
+
+[node name="Panel" type="PanelContainer" parent="DeathMenu"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -210.0
+offset_top = -145.0
+offset_right = 210.0
+offset_bottom = 145.0
+theme_override_styles/panel = SubResource("Menu_panel_style")
+
+[node name="VBox" type="VBoxContainer" parent="DeathMenu/Panel"]
+theme_override_constants/separation = 22
+alignment = 1
+
+[node name="Title" type="Label" parent="DeathMenu/Panel/VBox"]
+text = "YOU HAVE DIED!"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.88, 0.12, 0.10, 1)
+theme_override_colors/font_outline_color = Color(0.08, 0.0, 0.0, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 38
+
+[node name="ReturnToInsideLobby" type="Button" parent="DeathMenu/Panel/VBox"]
+custom_minimum_size = Vector2(330, 58)
+text = "RETURN TO LOBBY"
+
+[node name="ExitToMainLobby" type="Button" parent="DeathMenu/Panel/VBox"]
+custom_minimum_size = Vector2(330, 58)
 text = "EXIT"
 
 [node name="InventoryWindow" type="CanvasLayer" parent="."]
@@ -586,13 +634,16 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.015, 0.008, 0.005, 0.3)
+color = Color(0.015, 0.008, 0.005, 0)
 
 [node name="Panel" type="PanelContainer" parent="InventoryWindow"]
-anchor_left = 0.66
-anchor_top = 0.03
-anchor_right = 0.98
-anchor_bottom = 0.97
+anchor_left = 0.666667
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 0.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
 theme_override_styles/panel = SubResource("Gothic_panel_style")
 
 [node name="VBox" type="VBoxContainer" parent="InventoryWindow/Panel"]
@@ -623,7 +674,7 @@ theme_override_colors/font_color = Color(0.72, 0.56, 0.24, 1)
 theme_override_font_sizes/font_size = 16
 
 [node name="EquipmentArea" type="Control" parent="InventoryWindow/Panel/VBox"]
-custom_minimum_size = Vector2(0, 220)
+custom_minimum_size = Vector2(0, 200)
 layout_mode = 2
 size_flags_vertical = 3
 size_flags_stretch_ratio = 1.0
@@ -638,7 +689,7 @@ theme_override_colors/font_color = Color(0.72, 0.56, 0.24, 1)
 theme_override_font_sizes/font_size = 16
 
 [node name="BackpackScroll" type="ScrollContainer" parent="InventoryWindow/Panel/VBox"]
-custom_minimum_size = Vector2(0, 220)
+custom_minimum_size = Vector2(0, 200)
 layout_mode = 2
 size_flags_vertical = 3
 size_flags_stretch_ratio = 1.0
@@ -667,13 +718,15 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.015, 0.008, 0.005, 0.3)
+color = Color(0.015, 0.008, 0.005, 0)
 
 [node name="Panel" type="PanelContainer" parent="CharacterWindow"]
-anchor_left = 0.02
-anchor_top = 0.03
-anchor_right = 0.34
-anchor_bottom = 0.97
+anchor_right = 0.333333
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 0.0
+offset_bottom = -16.0
 theme_override_styles/panel = SubResource("Gothic_panel_style")
 
 [node name="VBox" type="VBoxContainer" parent="CharacterWindow/Panel"]
@@ -697,8 +750,17 @@ theme_override_colors/font_color = Color(0.62, 0.51, 0.34, 1)
 [node name="Separator" type="HSeparator" parent="CharacterWindow/Panel/VBox"]
 theme_override_styles/separator = SubResource("Gothic_separator_style")
 
-[node name="Details" type="Label" parent="CharacterWindow/Panel/VBox"]
-custom_minimum_size = Vector2(380, 390)
+[node name="DetailsMargin" type="MarginContainer" parent="CharacterWindow/Panel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 10
+
+[node name="Details" type="Label" parent="CharacterWindow/Panel/VBox/DetailsMargin"]
+custom_minimum_size = Vector2(0, 390)
+layout_mode = 2
 text = "Name:\n\nClass:\n\nHealth:\n\nBase damage:\n\nSecondary:"
 vertical_alignment = 1
 theme_override_colors/font_color = Color(0.88, 0.79, 0.61, 1)
@@ -710,4 +772,7 @@ theme_override_font_sizes/font_size = 20
 [connection signal="pressed" from="MultiplayerMenu/MenuPanel/VBox/Host" to="." method="_on_host_pressed"]
 [connection signal="pressed" from="MultiplayerMenu/MenuPanel/VBox/Join" to="." method="_on_join_pressed"]
 [connection signal="pressed" from="PauseMenu/Panel/VBox/Login" to="." method="_on_login_pressed"]
+[connection signal="pressed" from="PauseMenu/Panel/VBox/ReturnToLobby" to="." method="_on_return_to_lobby_pressed"]
 [connection signal="pressed" from="PauseMenu/Panel/VBox/Exit" to="." method="_on_exit_pressed"]
+[connection signal="pressed" from="DeathMenu/Panel/VBox/ReturnToInsideLobby" to="." method="_on_death_return_inside_pressed"]
+[connection signal="pressed" from="DeathMenu/Panel/VBox/ExitToMainLobby" to="." method="_on_death_exit_pressed"]

@@ -2,12 +2,18 @@ extends CharacterBody3D
 
 const CHARACTER_BASE := "res://addons/kaykit_character_pack_adventures/Characters/gltf/"
 const CHARACTER_FILES := ["Knight.glb", "Rogue_Hooded.glb", "Mage.glb", "Barbarian.glb"]
-const CHARACTER_SCALES := [0.73, 0.80, 0.60, 0.75]
+const CHARACTER_SCALES := [0.949, 1.04, 0.78, 0.975]
+# Knight, Rogue, Mage and Barbarian. Each capsule follows its model instead
+# of using one oversized collision volume for all four classes.
+const CHARACTER_HITBOX_RADII := [0.507, 0.416, 0.442, 0.546]
+# All four imported characters are normalized to roughly 2.34 m by their
+# individual visual scales. Their collision tops now match those measurements.
+const CHARACTER_HITBOX_HEIGHTS := [2.341, 2.341, 2.342, 2.338]
 const WEAPON_BASE := "res://addons/kaykit_character_pack_adventures/Assets/gltf/"
+const MAGIC_LIGHTNING_SHADER := preload("res://shaders/magic_lightning.gdshader")
 const ACCESSORY_MESHES := ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Round_Shield", "Spike_Shield", "1H_Sword", "2H_Sword", "Knife_Offhand", "1H_Crossbow", "2H_Crossbow", "Knife", "Throwable", "Spellbook", "Spellbook_open", "1H_Wand", "2H_Staff", "1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "2H_Axe", "Mug"]
 const CLASS_ACCESSORIES := [[], ["1H_Crossbow"], [], []]
-const PRIMARY_ATTACK_DAMAGE := 5
-const SECONDARY_DAMAGE := 6
+const CHAIN_JUMP_DELAY := 0.09
 
 @export var move_speed := 5.5
 @export var sprint_speed := 9.0
@@ -40,6 +46,7 @@ var remote_position := Vector3.ZERO
 var remote_body_rotation := 0.0
 var remote_head_rotation := 0.0
 var remote_move_speed := 0.0
+var remote_velocity := Vector3.ZERO
 var character_model: Node3D
 var character_animation: AnimationPlayer
 var current_character_animation := ""
@@ -54,6 +61,17 @@ var secondary_cooldown_ends_at := 0.0
 var strength := 5
 var dexterity := 5
 var intelligence := 5
+var dead := false
+var equipped_weapon: Dictionary = {}
+var weapon_damage_min := 0
+var weapon_damage_max := 0
+var equipped_weapon_variant := 0
+var equipped_items: Dictionary = {}
+var equipment_visual_nodes: Array[Node] = []
+var first_person_weapon_nodes: Array[Node3D] = []
+var third_person_weapon_nodes: Array[Node3D] = []
+var first_person_wand_variants: Dictionary = {}
+var third_person_wand_variants: Dictionary = {}
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -77,6 +95,7 @@ func configure_network_player(peer_id: int, character_index: int, _character_col
 	$BodyVisual.visible = not local_player
 	$BodyVisual/Name.text = display_name
 	character_class = character_index
+	_configure_character_hitbox(character_index)
 	_setup_base_stats(character_index)
 	_load_character_model(character_index)
 	_setup_third_person_weapons(character_index)
@@ -86,6 +105,168 @@ func configure_network_player(peer_id: int, character_index: int, _character_col
 		_update_health_ui()
 		_update_secondary_cooldown_ui()
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_update_weapon_visuals()
+
+func apply_equipped_weapon(item: Dictionary) -> void:
+	equipped_weapon = item.duplicate(true)
+	weapon_damage_min = int(item.get("physical_min", 0))
+	weapon_damage_max = int(item.get("physical_max", 0))
+	equipped_weapon_variant = clampi(int(item.get("model_variant", 0)), 0, 3)
+	_update_weapon_visuals()
+
+func apply_equipped_items(loadout: Dictionary) -> void:
+	equipped_items = loadout.duplicate(true)
+	apply_equipped_weapon(equipped_items.get("main_hand", {}))
+	_rebuild_equipment_visuals()
+
+func _rebuild_equipment_visuals() -> void:
+	for visual_node in equipment_visual_nodes:
+		if is_instance_valid(visual_node):
+			visual_node.queue_free()
+	equipment_visual_nodes.clear()
+	# Equipment still affects the loadout and statistics, but only the equipped
+	# weapon is represented on the first- and third-person character models.
+
+func _add_equipped_visual(skeleton: Skeleton3D, slot_key: String, bone_candidates: Array[String]) -> void:
+	var item = equipped_items.get(slot_key, {})
+	if not item is Dictionary or item.is_empty():
+		return
+	var bone_name := ""
+	for candidate in bone_candidates:
+		if skeleton.find_bone(candidate) >= 0:
+			bone_name = candidate
+			break
+	if bone_name.is_empty():
+		return
+	var attachment := BoneAttachment3D.new()
+	attachment.name = "GeneratedEquipment_%s" % slot_key
+	attachment.bone_name = bone_name
+	skeleton.add_child(attachment)
+	equipment_visual_nodes.append(attachment)
+	_create_equipment_model(attachment, str(item.get("type", "")), clampi(int(item.get("model_variant", 0)), 0, 3))
+
+func _equipment_material(item_type: String, variant: int) -> Material:
+	var defensive := item_type in ["helmet", "body_armour", "gloves", "boots", "belt"]
+	if defensive and variant == 3:
+		var shader := Shader.new()
+		shader.code = "shader_type spatial; render_mode specular_schlick_ggx; void fragment(){ float stripe=fract(UV.x*3.0); vec3 red=vec3(0.78,0.08,0.11); vec3 green=vec3(0.06,0.52,0.20); vec3 blue=vec3(0.05,0.28,0.72); ALBEDO=stripe<0.333?red:(stripe<0.666?green:blue); METALLIC=0.28; ROUGHNESS=0.48; }"
+		var striped := ShaderMaterial.new()
+		striped.shader = shader
+		return striped
+	var magical_colors := [Color("#aeb6c2"), Color("#cc3945"), Color("#e5b92f"), Color("#3987db")]
+	var defensive_colors := [Color("#c73b43"), Color("#3e9a59"), Color("#397fd0"), Color("#397fd0")]
+	var material := StandardMaterial3D.new()
+	material.albedo_color = defensive_colors[variant] if defensive else magical_colors[variant]
+	material.metallic = 0.15 + variant * 0.12
+	material.roughness = 0.48
+	return material
+
+func _equipment_mesh(parent: Node3D, mesh: PrimitiveMesh, position_: Vector3, scale_: Vector3, material: Material, rotation_ := Vector3.ZERO) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.mesh = mesh
+	node.position = position_
+	node.scale = scale_
+	node.rotation_degrees = rotation_
+	node.material_override = material
+	parent.add_child(node)
+	return node
+
+func _create_equipment_model(parent: Node3D, item_type: String, variant: int) -> void:
+	var material := _equipment_material(item_type, variant)
+	if item_type == "helmet":
+		var helm := CylinderMesh.new()
+		helm.top_radius = 0.30 - variant * 0.015
+		helm.bottom_radius = 0.34
+		helm.height = 0.34 + variant * 0.025
+		_equipment_mesh(parent, helm, Vector3(0, 0.13, 0), Vector3.ONE, material)
+		if variant >= 1:
+			var crest := BoxMesh.new()
+			crest.size = Vector3(0.08 + variant * 0.025, 0.30, 0.42)
+			_equipment_mesh(parent, crest, Vector3(0, 0.39, 0), Vector3.ONE, material)
+	elif item_type == "body_armour":
+		var chest := BoxMesh.new()
+		chest.size = Vector3(0.68 + variant * 0.035, 0.62, 0.34 + variant * 0.025)
+		_equipment_mesh(parent, chest, Vector3(0, -0.18, 0), Vector3.ONE, material)
+		if variant >= 1:
+			var shoulder := SphereMesh.new()
+			for side in [-1.0, 1.0]:
+				_equipment_mesh(parent, shoulder, Vector3(0.40 * side, 0.02, 0), Vector3(0.24, 0.16 + variant * 0.03, 0.22), material)
+	elif item_type == "gloves":
+		var glove := BoxMesh.new()
+		glove.size = Vector3(0.24, 0.28 + variant * 0.025, 0.22)
+		_equipment_mesh(parent, glove, Vector3.ZERO, Vector3.ONE, material, Vector3(0, variant * 12.0, 0))
+	elif item_type == "boots":
+		var boot := BoxMesh.new()
+		boot.size = Vector3(0.26 + variant * 0.015, 0.31, 0.42 + variant * 0.025)
+		_equipment_mesh(parent, boot, Vector3(0, -0.07, -0.08), Vector3.ONE, material)
+		if variant >= 1:
+			var cuff := CylinderMesh.new()
+			cuff.top_radius = 0.17
+			cuff.bottom_radius = 0.15
+			cuff.height = 0.13
+			_equipment_mesh(parent, cuff, Vector3(0, 0.12, 0), Vector3(1.0, 1.0, 0.82), material)
+	elif item_type == "ring":
+		var ring := TorusMesh.new()
+		ring.inner_radius = 0.065
+		ring.outer_radius = 0.095 + variant * 0.008
+		_equipment_mesh(parent, ring, Vector3(0, -0.02, 0), Vector3.ONE, material, Vector3(90, 0, 0))
+	elif item_type == "amulet":
+		var necklace := TorusMesh.new()
+		necklace.inner_radius = 0.18
+		necklace.outer_radius = 0.205
+		_equipment_mesh(parent, necklace, Vector3(0, -0.12, -0.20), Vector3(1.0, 1.15, 1.0), material, Vector3(90, 0, 0))
+		var gem := SphereMesh.new()
+		_equipment_mesh(parent, gem, Vector3(0, -0.38, -0.23), Vector3(0.10 + variant * 0.015, 0.14, 0.06), material)
+	elif item_type == "belt":
+		var belt := CylinderMesh.new()
+		belt.top_radius = 0.39
+		belt.bottom_radius = 0.39
+		belt.height = 0.10 + variant * 0.018
+		_equipment_mesh(parent, belt, Vector3(0, -0.36, 0), Vector3(1.0, 1.0, 0.72), material)
+
+func _has_equipped_weapon() -> bool:
+	return not equipped_weapon.is_empty() and weapon_damage_max > 0
+
+func _roll_weapon_damage() -> int:
+	if not _has_equipped_weapon():
+		return 0
+	return randi_range(weapon_damage_min, weapon_damage_max)
+
+func _roll_secondary_weapon_damage() -> int:
+	return ceili(float(_roll_weapon_damage()) * 1.20)
+
+func _update_weapon_visuals() -> void:
+	var active := _has_equipped_weapon()
+	for weapon_node in first_person_weapon_nodes:
+		if is_instance_valid(weapon_node):
+			weapon_node.visible = active
+	for weapon_node in third_person_weapon_nodes:
+		if is_instance_valid(weapon_node):
+			weapon_node.visible = active
+	for variant in first_person_wand_variants:
+		var fp_wand := first_person_wand_variants[variant] as Node3D
+		fp_wand.visible = active and int(variant) == equipped_weapon_variant
+	for variant in third_person_wand_variants:
+		var tp_wand := third_person_wand_variants[variant] as Node3D
+		tp_wand.visible = active and int(variant) == equipped_weapon_variant
+	if is_multiplayer_authority():
+		sword.visible = active and not third_person_enabled
+		offhand.visible = active and not third_person_enabled and character_class in [0, 3]
+	if character_model:
+		_set_character_mesh_view(third_person_enabled)
+
+func _configure_character_hitbox(class_index: int) -> void:
+	var collision := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if not collision:
+		return
+	var safe_index := clampi(class_index, 0, CHARACTER_HITBOX_RADII.size() - 1)
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = CHARACTER_HITBOX_RADII[safe_index]
+	capsule.height = CHARACTER_HITBOX_HEIGHTS[safe_index]
+	collision.shape = capsule
+	# Keep the capsule bottom at the same Y as the model's feet (-0.90), even
+	# though its centre rises when the complete character becomes 30% taller.
+	collision.position.y = capsule.height * 0.5 - 0.90
 
 func _setup_base_stats(class_index: int) -> void:
 	strength = 5
@@ -100,7 +281,7 @@ func _setup_base_stats(class_index: int) -> void:
 			intelligence = 10
 
 func receive_damage(amount: int, damage_type := "physical") -> void:
-	if amount <= 0 or health <= 0:
+	if amount <= 0 or health <= 0 or dead:
 		return
 	var final_damage := amount
 	if character_class == 0 and blocking:
@@ -109,6 +290,32 @@ func receive_damage(amount: int, damage_type := "physical") -> void:
 	health = maxi(0, health - final_damage)
 	_update_health_ui()
 	_spawn_floating_number(final_damage, false)
+	if health <= 0:
+		_die()
+
+func _die() -> void:
+	if dead:
+		return
+	dead = true
+	blocking = false
+	attack_in_progress = false
+	controls_enabled = false
+	velocity = Vector3.ZERO
+	_play_character_animation("Death_A")
+	if is_multiplayer_authority():
+		var game := get_parent()
+		if game and game.has_method("handle_player_death"):
+			game.handle_player_death(get_multiplayer_authority())
+
+func revive_full() -> void:
+	dead = false
+	health = max_health
+	blocking = false
+	attack_in_progress = false
+	velocity = Vector3.ZERO
+	controls_enabled = true
+	_update_health_ui()
+	_play_character_animation("Idle")
 
 @rpc("any_peer", "call_local", "reliable")
 func receive_server_damage(amount: int, damage_type := "physical") -> void:
@@ -161,6 +368,10 @@ func _update_health_ui() -> void:
 		health_bar.value = health
 	if health_value:
 		health_value.text = "%d/%d" % [health, max_health]
+	if is_multiplayer_authority():
+		var game := get_parent()
+		if game and game.has_method("refresh_character_panel"):
+			game.refresh_character_panel()
 
 func _setup_secondary_cooldown_ui() -> void:
 	if not secondary_cooldown_bar:
@@ -220,6 +431,8 @@ func _weapon_asset(file_name: String, parent: Node3D, position_ := Vector3.ZERO,
 	return weapon
 
 func _setup_first_person_weapons(class_index: int) -> void:
+	first_person_weapon_nodes.clear()
+	first_person_wand_variants.clear()
 	for child in sword.get_children():
 		child.visible = false
 	sword.position = sword_rest_position
@@ -230,26 +443,31 @@ func _setup_first_person_weapons(class_index: int) -> void:
 		0:
 			sword.position = Vector3(0.58, -0.74, -1.18)
 			offhand.position = Vector3(-0.64, -0.60, -1.26)
-			_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.24, 0.0), Vector3.ZERO, 0.56)
-			_weapon_asset("shield_badge.gltf", offhand, Vector3.ZERO, Vector3(0.0, 180.0, 0.0), 0.54)
+			first_person_weapon_nodes.append(_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.24, 0.0), Vector3.ZERO, 0.56))
+			first_person_weapon_nodes.append(_weapon_asset("shield_badge.gltf", offhand, Vector3.ZERO, Vector3(0.0, 180.0, 0.0), 0.54))
 		1:
 			sword.position = Vector3(0.08, -0.76, -1.22)
 			sword.rotation_degrees = Vector3(0.0, 180.0, 0.0)
-			_weapon_asset("crossbow_1handed.gltf", sword, Vector3.ZERO, Vector3.ZERO, 0.52)
+			first_person_weapon_nodes.append(_weapon_asset("crossbow_1handed.gltf", sword, Vector3.ZERO, Vector3.ZERO, 0.52))
 		2:
 			sword.position = Vector3(0.60, -0.76, -1.22)
-			_weapon_asset("wand.gltf", sword, Vector3(0.0, 0.16, 0.0), Vector3.ZERO, 0.68)
+			for variant in range(4):
+				var wand := _create_wand_model(sword, variant, Vector3(0.0, 0.16, 0.0), 0.68)
+				first_person_weapon_nodes.append(wand)
+				first_person_wand_variants[variant] = wand
 		3:
 			sword.position = Vector3(0.66, -0.80, -1.28)
 			offhand.position = Vector3(-0.66, -0.80, -1.28)
-			_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.22, 0.0), Vector3.ZERO, 0.52)
-			_weapon_asset("sword_1handed.gltf", offhand, Vector3(0.0, 0.22, 0.0), Vector3.ZERO, 0.52)
+			first_person_weapon_nodes.append(_weapon_asset("sword_1handed.gltf", sword, Vector3(0.0, 0.22, 0.0), Vector3.ZERO, 0.52))
+			first_person_weapon_nodes.append(_weapon_asset("sword_1handed.gltf", offhand, Vector3(0.0, 0.22, 0.0), Vector3.ZERO, 0.52))
 	sword_rest_position = sword.position
 	sword_rest_rotation = sword.rotation_degrees
 	offhand_rest_position = offhand.position
 	offhand_rest_rotation = offhand.rotation_degrees
 
 func _setup_third_person_weapons(class_index: int) -> void:
+	third_person_weapon_nodes.clear()
+	third_person_wand_variants.clear()
 	if not character_model:
 		return
 	var skeletons := character_model.find_children("*", "Skeleton3D", true, false)
@@ -261,22 +479,109 @@ func _setup_third_person_weapons(class_index: int) -> void:
 	skeleton.add_child(right_hand_marker)
 	match class_index:
 		0:
-			_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
-			_attach_to_hand(skeleton, "handslot.l", "shield_badge.gltf", Vector3.ZERO, Vector3.ZERO, 0.92)
+			third_person_weapon_nodes.append(_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf"))
+			third_person_weapon_nodes.append(_attach_to_hand(skeleton, "handslot.l", "shield_badge.gltf", Vector3.ZERO, Vector3.ZERO, 0.92))
 		1:
 			# La ballesta 1H integrada ya tiene el ajuste correcto para esta mano.
 			pass
 		2:
-			_attach_to_hand(skeleton, "handslot.r", "wand.gltf", Vector3.ZERO, Vector3.ZERO, 1.08)
+			var attachment := BoneAttachment3D.new()
+			attachment.bone_name = "handslot.r"
+			skeleton.add_child(attachment)
+			for variant in range(4):
+				var wand := _create_wand_model(attachment, variant, Vector3.ZERO, 1.08)
+				third_person_weapon_nodes.append(wand)
+				third_person_wand_variants[variant] = wand
 		3:
-			_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf")
-			_attach_to_hand(skeleton, "handslot.l", "sword_1handed.gltf")
+			third_person_weapon_nodes.append(_attach_to_hand(skeleton, "handslot.r", "sword_1handed.gltf"))
+			third_person_weapon_nodes.append(_attach_to_hand(skeleton, "handslot.l", "sword_1handed.gltf"))
 
-func _attach_to_hand(skeleton: Skeleton3D, bone_name: String, file_name: String, position_ := Vector3.ZERO, rotation_ := Vector3.ZERO, scale_ := 1.0) -> void:
+func _attach_to_hand(skeleton: Skeleton3D, bone_name: String, file_name: String, position_ := Vector3.ZERO, rotation_ := Vector3.ZERO, scale_ := 1.0) -> Node3D:
 	var attachment := BoneAttachment3D.new()
 	attachment.bone_name = bone_name
 	skeleton.add_child(attachment)
-	_weapon_asset(file_name, attachment, position_, rotation_, scale_)
+	return _weapon_asset(file_name, attachment, position_, rotation_, scale_)
+
+func _wand_material(color: Color, emission_color := Color.BLACK, emission_energy := 0.0) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.72
+	if emission_energy > 0.0:
+		material.emission_enabled = true
+		material.emission = emission_color
+		material.emission_energy_multiplier = emission_energy
+	return material
+
+func _wand_cylinder(parent: Node3D, position_: Vector3, radius: float, height: float, material: Material) -> MeshInstance3D:
+	var piece := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius * 0.82
+	mesh.bottom_radius = radius
+	mesh.height = height
+	mesh.radial_segments = 12
+	mesh.material = material
+	piece.mesh = mesh
+	piece.position = position_
+	parent.add_child(piece)
+	return piece
+
+func _wand_gem(parent: Node3D, position_: Vector3, color: Color, scale_ := Vector3(0.17, 0.28, 0.17)) -> MeshInstance3D:
+	var gem := MeshInstance3D.new()
+	var mesh := SphereMesh.new()
+	mesh.radius = 0.5
+	mesh.height = 1.0
+	mesh.radial_segments = 12
+	mesh.rings = 6
+	mesh.material = _wand_material(color.darkened(0.18), color, 5.0)
+	gem.mesh = mesh
+	gem.position = position_
+	gem.scale = scale_
+	gem.rotation_degrees.y = 45.0
+	parent.add_child(gem)
+	return gem
+
+func _create_wand_model(parent: Node3D, variant: int, position_: Vector3, scale_: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = "WandVariant%d" % variant
+	root.position = position_
+	root.scale = Vector3.ONE * scale_
+	parent.add_child(root)
+	var wood_dark := _wand_material(Color("#4c2d1b"))
+	var bronze := _wand_material(Color("#a66a2c"))
+	var pale_wood := _wand_material(Color("#8d6337"))
+	var bone := _wand_material(Color("#d7c79f"))
+	var leather := _wand_material(Color("#3b211a"))
+	var iron := _wand_material(Color("#272c32"))
+	var silver := _wand_material(Color("#aeb8c0"))
+	match variant:
+		0:
+			_wand_cylinder(root, Vector3(0, 0.64, 0), 0.075, 1.28, wood_dark)
+			for y in [0.10, 0.92, 1.18]:
+				_wand_cylinder(root, Vector3(0, y, 0), 0.095, 0.09, bronze)
+			_wand_gem(root, Vector3(0, 1.43, 0), Color("#aeb6c2"), Vector3(0.19, 0.34, 0.19))
+		1:
+			_wand_cylinder(root, Vector3(0, 0.65, 0), 0.085, 1.30, pale_wood)
+			_wand_cylinder(root, Vector3(0, 0.18, 0), 0.10, 0.25, leather)
+			_wand_gem(root, Vector3(0, 1.39, 0), Color("#cc3945"), Vector3(0.18, 0.28, 0.18))
+			var leaf_material := _wand_material(Color("#8e2631"))
+			for side in [-1.0, 1.0]:
+				var leaf := _wand_gem(root, Vector3(0.13 * side, 1.15, 0), Color("#cc3945"), Vector3(0.12, 0.22, 0.04))
+				leaf.material_override = leaf_material
+				leaf.rotation_degrees.z = 42.0 * side
+		2:
+			_wand_cylinder(root, Vector3(0, 0.64, 0), 0.085, 1.28, bone)
+			for y in [0.20, 0.55, 0.92]:
+				_wand_cylinder(root, Vector3(0, y, 0), 0.096, 0.10, leather)
+			var skull := _wand_gem(root, Vector3(0, 1.27, 0), Color("#d7c79f"), Vector3(0.25, 0.24, 0.18))
+			skull.material_override = bone
+			_wand_gem(root, Vector3(0, 1.52, 0), Color("#e5b92f"), Vector3(0.17, 0.29, 0.17))
+		3:
+			_wand_cylinder(root, Vector3(0, 0.65, 0), 0.078, 1.30, iron)
+			_wand_cylinder(root, Vector3(0, 0.19, 0), 0.098, 0.30, leather)
+			for y in [0.36, 0.78, 1.12]:
+				_wand_cylinder(root, Vector3(0, y, 0), 0.094, 0.08, silver)
+			_wand_gem(root, Vector3(0, 1.45, 0), Color("#3987db"), Vector3(0.18, 0.32, 0.18))
+	return root
 
 func _load_character_model(character_index: int) -> void:
 	character_index = clampi(character_index, 0, CHARACTER_FILES.size() - 1)
@@ -349,6 +654,8 @@ func _input(event: InputEvent) -> void:
 		if event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			return
+		if event.pressed and _inside_lobby_combat_locked():
+			return
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_attack()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
@@ -363,6 +670,12 @@ func _input(event: InputEvent) -> void:
 					3:
 						_whirlwind()
 
+func _inside_lobby_combat_locked() -> bool:
+	for safe_state in get_tree().get_nodes_in_group("dungeon_safe_state"):
+		if safe_state.has_method("is_player_inside_lobby") and safe_state.is_player_inside_lobby(global_position):
+			return true
+	return false
+
 func set_controls_enabled(enabled: bool) -> void:
 	controls_enabled = enabled
 	if not enabled:
@@ -375,8 +688,8 @@ func _set_camera_mode(use_third_person: bool) -> void:
 	# Los modelos de aventura no tienen brazos FPS separados: la cámara queda
 	# dentro de mangas, casco y escudo. En F1 usamos las armas de cámara y en F3
 	# el esqueleto completo; ambas animaciones conservan la misma duración.
-	sword.visible = not use_third_person
-	offhand.visible = not use_third_person and character_class in [0, 3]
+	sword.visible = _has_equipped_weapon() and not use_third_person
+	offhand.visible = _has_equipped_weapon() and not use_third_person and character_class in [0, 3]
 	$BodyVisual.visible = true
 	$BodyVisual/Name.visible = use_third_person
 	first_person_camera.set_cull_mask_value(2, false)
@@ -394,7 +707,8 @@ func _set_character_mesh_view(full_body: bool) -> void:
 		var accessory := mesh_name in ACCESSORY_MESHES
 		var arm := mesh_name.ends_with("_ArmLeft") or mesh_name.ends_with("_ArmRight")
 		var attached_weapon := _has_bone_attachment_parent(mesh_instance)
-		var show_mesh := attached_weapon or not accessory or mesh_name in allowed
+		var equipment_mesh := attached_weapon or (accessory and mesh_name in allowed)
+		var show_mesh := (_has_equipped_weapon() if equipment_mesh else true) and (not accessory or mesh_name in allowed or attached_weapon)
 		mesh_instance.visible = show_mesh
 		# La capa 2 contiene exclusivamente el cuerpo del jugador local. La cámara
 		# F1 no dibuja esa capa, evitando cualquier casco o manga dentro de ella.
@@ -409,7 +723,7 @@ func _has_bone_attachment_parent(node: Node) -> bool:
 	return false
 
 func _attack() -> void:
-	if attack_in_progress or blocking:
+	if attack_in_progress or blocking or not _has_equipped_weapon():
 		return
 	match character_class:
 		0:
@@ -516,11 +830,11 @@ func _cast_magic_ray() -> void:
 	_animate_ranged_weapon(Vector3(-0.08, 0.18, -0.28), 0.48)
 	var target: Object = shot.collider
 	if target and target.has_method("receive_hit"):
-		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
+		target.receive_hit(_roll_weapon_damage())
 	_finish_local_action(0.48)
 
 func _rogue_double_piercing() -> void:
-	if attack_in_progress or not _secondary_available(2.0):
+	if attack_in_progress or not _has_equipped_weapon() or not _secondary_available(2.0):
 		return
 	attack_in_progress = true
 	_remote_character_action.rpc("1H_Ranged_Shoot", 0.62)
@@ -534,7 +848,7 @@ func _rogue_double_piercing() -> void:
 		_animate_ranged_weapon(Vector3(0.0, 0.025, 0.13), 0.20)
 		for target in piercing.targets:
 			if is_instance_valid(target) and target.has_method("receive_hit"):
-				target.receive_hit(SECONDARY_DAMAGE)
+				target.receive_hit(_roll_secondary_weapon_damage())
 		if shot_index == 0:
 			await get_tree().create_timer(0.28).timeout
 	await get_tree().create_timer(0.34).timeout
@@ -571,7 +885,7 @@ func _piercing_query(max_range: float, max_targets: int) -> Dictionary:
 	return {"end": final_end, "targets": targets}
 
 func _mage_chain() -> void:
-	if attack_in_progress or not _secondary_available(3.0):
+	if attack_in_progress or not _has_equipped_weapon() or not _secondary_available(3.0):
 		return
 	attack_in_progress = true
 	var origin := _weapon_muzzle_position()
@@ -586,31 +900,56 @@ func _mage_chain() -> void:
 	if primary and (primary.has_method("receive_hit") or primary.has_method("is_chain_ally")):
 		_apply_chain_effect(primary)
 		var primary_node := primary as Node3D
-		var candidates: Array[Node3D] = []
-		for node in get_tree().get_nodes_in_group("damageable") + get_tree().get_nodes_in_group("chain_allies"):
-			if node is Node3D and node != primary and not candidates.has(node):
-				if primary_node.global_position.distance_to((node as Node3D).global_position) <= 4.0:
-					candidates.append(node as Node3D)
-		candidates.sort_custom(func(a: Node3D, b: Node3D) -> bool:
-			return primary_node.global_position.distance_squared_to(a.global_position) < primary_node.global_position.distance_squared_to(b.global_position))
 		var previous_point := _target_point(primary_node)
-		for index in range(mini(3, candidates.size())):
-			var chained := candidates[index]
+		var visited: Array[Node3D] = [primary_node]
+		var chain_elapsed := 0.0
+		for _jump in range(3):
+			var chained := _find_next_chain_target(previous_point, visited)
+			if not chained:
+				break
+			visited.append(chained)
+			# Let each electrical arc be read as an individual jump instead of
+			# creating every segment and applying every effect in the same frame.
+			await get_tree().create_timer(CHAIN_JUMP_DELAY).timeout
+			chain_elapsed += CHAIN_JUMP_DELAY
+			if not is_instance_valid(chained):
+				continue
 			var chained_point := _target_point(chained)
 			_remote_ranged_effect.rpc(1, previous_point, chained_point)
 			_spawn_ranged_effect(1, previous_point, chained_point)
 			_apply_chain_effect(chained)
 			previous_point = chained_point
-	await get_tree().create_timer(0.72).timeout
+		await get_tree().create_timer(maxf(0.05, 0.72 - chain_elapsed)).timeout
+	else:
+		await get_tree().create_timer(0.72).timeout
 	_finish_attack()
 
 func _apply_chain_effect(target: Object) -> void:
+	var damage := _roll_weapon_damage()
+	if damage <= 0:
+		return
 	if target.has_method("is_chain_ally") and target.is_chain_ally():
-		var healing := maxi(1, ceili(PRIMARY_ATTACK_DAMAGE * 0.05))
+		var healing := maxi(1, ceili(damage * 0.05))
 		if target.has_method("receive_chain_healing"):
 			target.receive_chain_healing(healing)
 	elif target.has_method("receive_hit"):
-		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
+		target.receive_hit(damage)
+
+func _find_next_chain_target(origin_point: Vector3, visited: Array[Node3D]) -> Node3D:
+	var closest: Node3D = null
+	var closest_distance_squared := 4.0 * 4.0
+	var possible_targets := get_tree().get_nodes_in_group("damageable") + get_tree().get_nodes_in_group("chain_allies")
+	for node in possible_targets:
+		if not node is Node3D:
+			continue
+		var candidate := node as Node3D
+		if not is_instance_valid(candidate) or visited.has(candidate):
+			continue
+		var distance_squared := origin_point.distance_squared_to(_target_point(candidate))
+		if distance_squared <= closest_distance_squared:
+			closest = candidate
+			closest_distance_squared = distance_squared
+	return closest
 
 func _target_point(target: Node3D) -> Vector3:
 	return target.global_position + Vector3(0.0, 1.25, 0.0)
@@ -627,7 +966,14 @@ func _ranged_query(max_range: float, origin: Vector3) -> Dictionary:
 	aim_query.exclude = [get_rid()]
 	var aim_result := get_world_3d().direct_space_state.intersect_ray(aim_query)
 	var intended_end: Vector3 = aim_result.get("position", aim_end)
-	var query := PhysicsRayQueryParameters3D.create(origin, intended_end)
+	# The camera ray ends exactly on the target surface. A second ray from the
+	# weapon to that same boundary point can stop a fraction before entering the
+	# collider because of floating-point precision, returning no target even
+	# though the crosshair is centred on it. Extend it slightly through the
+	# surface; nearer walls and obstacles are still detected first.
+	var muzzle_direction := (intended_end - origin).normalized()
+	var projectile_query_end := intended_end + muzzle_direction * 0.75
+	var query := PhysicsRayQueryParameters3D.create(origin, projectile_query_end)
 	query.exclude = [get_rid()]
 	var result := get_world_3d().direct_space_state.intersect_ray(query)
 	return {
@@ -645,7 +991,7 @@ func _animate_ranged_weapon(offset: Vector3, duration: float) -> void:
 func _deliver_projectile_hit(target: Object, travel_time: float) -> void:
 	await get_tree().create_timer(travel_time).timeout
 	if is_instance_valid(target) and target.has_method("receive_hit"):
-		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
+		target.receive_hit(_roll_weapon_damage())
 
 func _finish_local_action(duration: float) -> void:
 	await get_tree().create_timer(duration).timeout
@@ -677,29 +1023,47 @@ func _spawn_ranged_effect(effect_type: int, origin: Vector3, end: Vector3) -> vo
 		tween.tween_property(projectile, "global_position", end, duration)
 		tween.tween_callback(projectile.queue_free)
 	else:
-		var beam := MeshInstance3D.new()
-		var mesh := CylinderMesh.new()
 		var distance := origin.distance_to(end)
-		mesh.top_radius = 0.06
-		mesh.bottom_radius = 0.06
-		mesh.height = distance
-		mesh.radial_segments = 8
-		var material := StandardMaterial3D.new()
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.albedo_color = Color(0.25, 0.65, 1.0, 0.9)
-		material.emission_enabled = true
-		material.emission = Color(0.18, 0.55, 1.0)
-		material.emission_energy_multiplier = 8.0
-		mesh.material = material
-		beam.mesh = mesh
-		get_parent().add_child(beam)
-		beam.global_position = (origin + end) * 0.5
-		beam.quaternion = Quaternion(Vector3.UP, (end - origin).normalized())
-		var tween := beam.create_tween()
-		tween.tween_interval(0.24)
-		tween.tween_property(beam, "scale", Vector3(0.04, 1.0, 0.04), 0.28)
-		tween.tween_callback(beam.queue_free)
+		if distance <= 0.01:
+			return
+		var beam_root := Node3D.new()
+		get_parent().add_child(beam_root)
+		beam_root.global_position = (origin + end) * 0.5
+		beam_root.quaternion = Quaternion(Vector3.UP, (end - origin).normalized())
+		_add_lightning_layer(beam_root, distance, 0.055, Color(0.82, 0.96, 1.0), 14.0, 0.98, 0.045)
+		_add_lightning_layer(beam_root, distance, 0.15, Color(0.12, 0.48, 1.0), 6.0, 0.34, 0.13)
+		var flash := OmniLight3D.new()
+		flash.light_color = Color(0.30, 0.66, 1.0)
+		flash.light_energy = 3.2
+		flash.omni_range = minf(6.0, maxf(2.4, distance * 0.45))
+		flash.shadow_enabled = false
+		beam_root.add_child(flash)
+		var tween := beam_root.create_tween()
+		tween.tween_interval(0.25)
+		tween.tween_property(flash, "light_energy", 0.0, 0.16)
+		tween.parallel().tween_property(beam_root, "scale", Vector3(0.08, 1.0, 0.08), 0.16)
+		tween.tween_callback(beam_root.queue_free)
 		_spawn_magic_particles(end)
+
+func _add_lightning_layer(parent: Node3D, length: float, radius: float, color: Color, emission: float, opacity: float, jitter: float) -> void:
+	var beam := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = length
+	mesh.radial_segments = 12
+	mesh.rings = 32
+	var material := ShaderMaterial.new()
+	material.shader = MAGIC_LIGHTNING_SHADER
+	material.set_shader_parameter("bolt_color", color)
+	material.set_shader_parameter("emission_strength", emission)
+	material.set_shader_parameter("opacity", opacity)
+	material.set_shader_parameter("jitter_amount", jitter)
+	material.set_shader_parameter("animation_speed", 30.0)
+	material.set_shader_parameter("bolt_segments", 20.0)
+	mesh.material = material
+	beam.mesh = mesh
+	parent.add_child(beam)
 
 func _spawn_magic_particles(position_: Vector3) -> void:
 	for index in range(10):
@@ -726,7 +1090,7 @@ func _spawn_magic_particles(position_: Vector3) -> void:
 		tween.chain().tween_callback(particle.queue_free)
 
 func _whirlwind() -> void:
-	if attack_in_progress or blocking or not _secondary_available(4.0):
+	if attack_in_progress or blocking or not _has_equipped_weapon() or not _secondary_available(4.0):
 		return
 	attack_in_progress = true
 	_remote_character_action.rpc("2H_Melee_Attack_Spinning", 0.78)
@@ -756,7 +1120,7 @@ func _apply_whirlwind_hit() -> void:
 	for target in get_tree().get_nodes_in_group("damageable"):
 		if target is Node3D and global_position.distance_to((target as Node3D).global_position) <= 4.0:
 			if target.has_method("receive_hit"):
-				target.receive_hit(SECONDARY_DAMAGE)
+				target.receive_hit(_roll_secondary_weapon_damage())
 			if target.has_method("receive_knockback"):
 				target.receive_knockback(global_position, 0.32)
 
@@ -771,7 +1135,7 @@ func _apply_sword_hit() -> void:
 		return
 	var target := attack_ray.get_collider()
 	if target and target.has_method("receive_hit"):
-		target.receive_hit(PRIMARY_ATTACK_DAMAGE)
+		target.receive_hit(_roll_weapon_damage())
 
 func _finish_attack() -> void:
 	attack_in_progress = false
@@ -810,7 +1174,12 @@ func _physics_process(delta: float) -> void:
 	var animation_motion := -movement_speed if input_vector.y > 0.15 else movement_speed
 	if not attack_in_progress and not blocking:
 		_update_movement_animation(animation_motion)
-	_sync_state.rpc(global_position, rotation.y, head.rotation.x, animation_motion)
+	_sync_state.rpc(global_position, rotation.y, head.rotation.x, animation_motion, Vector3(velocity.x, 0.0, velocity.z))
+
+func get_projectile_prediction_velocity() -> Vector3:
+	if is_multiplayer_authority() or not multiplayer.has_multiplayer_peer():
+		return Vector3(velocity.x, 0.0, velocity.z)
+	return remote_velocity
 
 func _update_movement_animation(movement_speed: float) -> void:
 	var absolute_speed := absf(movement_speed)
@@ -824,8 +1193,9 @@ func _update_movement_animation(movement_speed: float) -> void:
 		_play_character_animation("Walking_A", clampf(absolute_speed / move_speed * 1.25, 0.8, 1.4))
 
 @rpc("authority", "call_remote", "unreliable_ordered")
-func _sync_state(position_: Vector3, body_rotation: float, head_rotation: float, movement_speed: float) -> void:
+func _sync_state(position_: Vector3, body_rotation: float, head_rotation: float, movement_speed: float, movement_velocity: Vector3) -> void:
 	remote_position = position_
 	remote_body_rotation = body_rotation
 	remote_head_rotation = head_rotation
 	remote_move_speed = movement_speed
+	remote_velocity = movement_velocity

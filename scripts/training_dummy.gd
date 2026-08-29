@@ -1,7 +1,9 @@
 extends StaticBody3D
 
-const WARRIOR_PATH := "res://addons/kaykit_character_pack_skeletons/addons/kaykit_character_pack_skeletons/Characters/gltf/Skeleton_Warrior.glb"
-const BLADE_PATH := "res://addons/kaykit_character_pack_skeletons/addons/kaykit_character_pack_skeletons/Assets/gltf/Skeleton_Blade.gltf"
+const CHARACTER_ROOT := "res://addons/kaykit_character_pack_skeletons/addons/kaykit_character_pack_skeletons/Characters/gltf/"
+const ASSET_ROOT := "res://addons/kaykit_character_pack_skeletons/addons/kaykit_character_pack_skeletons/Assets/gltf/"
+const SKELETON_MODELS := ["Skeleton_Minion.glb", "Skeleton_Warrior.glb", "Skeleton_Rogue.glb", "Skeleton_Mage.glb"]
+const SKELETON_WEAPONS := ["Skeleton_Axe.gltf", "Skeleton_Blade.gltf", "Skeleton_Crossbow.gltf", "Skeleton_Staff.gltf"]
 const MAX_HEALTH := 1000
 const ATTACK_RANGE := 2.0
 const REGEN_DELAY := 5.0
@@ -11,6 +13,8 @@ const REGEN_PER_SECOND := 100.0
 @export var is_ally := false
 @export_enum("Contraataque", "Pasivo", "Agresivo") var combat_mode := 0
 @export_range(1, MAX_HEALTH) var starting_health := MAX_HEALTH
+@export_enum("Minion", "Warrior", "Rogue", "Mage") var skeleton_type := 1
+@export var fixed_passive_dummy := false
 
 var hit_count := 0
 var health := MAX_HEALTH
@@ -30,7 +34,8 @@ func _ready() -> void:
 		add_to_group("chain_allies")
 	else:
 		add_to_group("damageable")
-		add_to_group("counterattack_targets")
+		if not fixed_passive_dummy:
+			add_to_group("counterattack_targets")
 	_setup_skeleton()
 	_setup_health_bar()
 	_update_counter()
@@ -38,7 +43,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
 		return
-	if not is_ally and combat_mode == 2:
+	if not is_ally and not fixed_passive_dummy and combat_mode == 2:
 		_try_aggressive_attack()
 	if health >= MAX_HEALTH:
 		return
@@ -85,12 +90,13 @@ func _update_health_bar() -> void:
 	health_text.text = "%d/%d" % [health, MAX_HEALTH]
 
 func _setup_skeleton() -> void:
-	var packed := load(WARRIOR_PATH) as PackedScene
+	var safe_type := clampi(skeleton_type, 0, SKELETON_MODELS.size() - 1)
+	var packed := load(CHARACTER_ROOT + SKELETON_MODELS[safe_type]) as PackedScene
 	if not packed:
-		push_error("Could not load the Skeleton Warrior")
+		push_error("Could not load skeleton dummy: " + SKELETON_MODELS[safe_type])
 		return
 	var model := packed.instantiate() as Node3D
-	model.name = "SkeletonWarriorModel"
+	model.name = "SkeletonDummyModel"
 	model.scale = Vector3.ONE * 0.78
 	add_child(model)
 	var animation_players := model.find_children("*", "AnimationPlayer", true, false)
@@ -102,9 +108,9 @@ func _setup_skeleton() -> void:
 		var attachment := BoneAttachment3D.new()
 		attachment.bone_name = "handslot.r"
 		(skeletons[0] as Skeleton3D).add_child(attachment)
-		var blade_scene := load(BLADE_PATH) as PackedScene
-		if blade_scene:
-			attachment.add_child(blade_scene.instantiate())
+		var weapon_scene := load(ASSET_ROOT + SKELETON_WEAPONS[safe_type]) as PackedScene
+		if weapon_scene:
+			attachment.add_child(weapon_scene.instantiate())
 
 func _play_animation(animation_name: String, speed := 1.0) -> void:
 	if animation_player and animation_player.has_animation(animation_name):
@@ -134,7 +140,7 @@ func _accept_hit(peer_id: int, damage: int) -> void:
 	_register_hit(damage)
 	if multiplayer.has_multiplayer_peer():
 		_sync_hits.rpc(hit_count, health)
-	if combat_mode == 0:
+	if combat_mode == 0 and not fixed_passive_dummy:
 		_start_counterattack(peer_id)
 
 @rpc("authority", "call_remote", "reliable")
@@ -172,6 +178,9 @@ func _update_counter() -> void:
 	if is_ally:
 		counter.text = "%s\nALLY" % target_title
 	else:
+		if fixed_passive_dummy:
+			counter.text = "%s\nHits: %d · Mode: PASSIVE" % [target_title, hit_count]
+			return
 		var mode_names := ["COUNTERATTACK", "PASSIVE", "AGGRESSIVE"]
 		counter.text = "%s\nHits: %d · Mode: %s" % [target_title, hit_count, mode_names[combat_mode]]
 
@@ -272,6 +281,8 @@ func _try_aggressive_attack() -> void:
 	var nearest_distance := ATTACK_RANGE + 0.001
 	for candidate in get_tree().get_nodes_in_group("chain_allies"):
 		if candidate is Node3D and str(candidate.name).begins_with("Player_"):
+			if not _safe_zone_allows_target(candidate as Node3D):
+				continue
 			var candidate_position := Vector2((candidate as Node3D).global_position.x, (candidate as Node3D).global_position.z)
 			var own_position := Vector2(global_position.x, global_position.z)
 			var distance := own_position.distance_to(candidate_position)
@@ -307,6 +318,8 @@ func _damage_player(peer_id: int, amount: int) -> void:
 	var player := get_parent().get_node_or_null("Player_%d" % peer_id)
 	if not player:
 		return
+	if not _safe_zone_allows_target(player):
+		return
 	var enemy_horizontal := Vector2(global_position.x, global_position.z)
 	var player_horizontal := Vector2(player.global_position.x, player.global_position.z)
 	if enemy_horizontal.distance_to(player_horizontal) > ATTACK_RANGE:
@@ -315,3 +328,9 @@ func _damage_player(peer_id: int, amount: int) -> void:
 		player.receive_damage(amount, "physical")
 	else:
 		player.receive_server_damage.rpc_id(peer_id, amount, "physical")
+
+func _safe_zone_allows_target(player: Node3D) -> bool:
+	for safe_state in get_tree().get_nodes_in_group("dungeon_safe_state"):
+		if safe_state.has_method("can_enemy_target") and not safe_state.can_enemy_target(player):
+			return false
+	return true

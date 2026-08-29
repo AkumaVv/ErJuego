@@ -5,7 +5,7 @@ const DARK_STONE := Color("#353a43")
 const FLOOR_STONE := Color("#454b55")
 const KAYKIT := "res://addons/kaykit_dungeon_remastered/Assets/gltf/"
 const ROOM_SIZE := 24.0
-const WALL_HEIGHT := 4.0
+const WALL_HEIGHT := 8.0
 
 func _ready() -> void:
 	_build_asset_room()
@@ -168,9 +168,13 @@ func _build_asset_room() -> void:
 	for offset in range(-10, 11, 4):
 		var wall_asset := "wall_cracked.gltf.glb" if abs(offset) == 6 else "wall.gltf.glb"
 		_asset_model(wall_asset, Vector3(offset, 0.0, -11.5))
+		_asset_model(wall_asset, Vector3(offset, 4.0, -11.5))
 		_asset_model(wall_asset, Vector3(offset, 0.0, 11.5), Vector3(0.0, 180.0, 0.0))
+		_asset_model(wall_asset, Vector3(offset, 4.0, 11.5), Vector3(0.0, 180.0, 0.0))
 		_asset_model(wall_asset, Vector3(-11.5, 0.0, offset), Vector3(0.0, 90.0, 0.0))
+		_asset_model(wall_asset, Vector3(-11.5, 4.0, offset), Vector3(0.0, 90.0, 0.0))
 		_asset_model(wall_asset, Vector3(11.5, 0.0, offset), Vector3(0.0, -90.0, 0.0))
+		_asset_model(wall_asset, Vector3(11.5, 4.0, offset), Vector3(0.0, -90.0, 0.0))
 
 	# Colisiones simples ajustadas a las medidas reales de suelo, techo y muros.
 	_asset_box_collider("FloorCollision", Vector3(0.0, -0.10, 0.0), Vector3(ROOM_SIZE, 0.30, ROOM_SIZE))
@@ -183,7 +187,8 @@ func _build_asset_room() -> void:
 	for x in [-8.0, 8.0]:
 		for z in [-8.0, 8.0]:
 			_asset_model("pillar.gltf.glb", Vector3(x, 0.0, z))
-			_asset_box_collider("PillarCollision", Vector3(x, 2.0, z), Vector3(1.5, 4.0, 1.5))
+			_asset_model("pillar.gltf.glb", Vector3(x, 4.0, z))
+			_asset_box_collider("PillarCollision", Vector3(x, 4.0, z), Vector3(1.5, 8.0, 1.5))
 
 func _place_asset_props() -> void:
 	# Objetos medidos y separados de las paredes y rutas de paso.
@@ -209,5 +214,6 @@ func _asset_torch(model_position: Vector3, model_rotation: Vector3, light_positi
 	light.light_color = Color("#ff8a3d")
 	light.light_energy = 3.0
 	light.omni_range = 7.0
-	light.shadow_enabled = true
+	# Stacked wall modules otherwise cast a hard horizontal seam across the lobby.
+	light.shadow_enabled = false
 	add_child(light)
